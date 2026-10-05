@@ -52,12 +52,6 @@ chigir-ale/
 
 ## Getting Started
 
-### Prerequisites
-
-- Node.js >= 20.x
-- npm >= 10.x
-- PostgreSQL database instance
-
 ### Setup
 
 ```bash
