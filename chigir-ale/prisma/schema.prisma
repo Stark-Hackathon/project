@@ -1,6 +1,7 @@
 // Prisma Schema for Chigir Ale
-// Iteration 1: Identity, Organizations & Authorization
-// Spec sections: 5-7, 52 (User/Org/Membership), 131
+// Iteration 1: Identity, Organizations & Authorization (preserved)
+// Iteration 2: Core Domain, Reports & Database
+// Spec sections: 5-7, 8-12, 50-76, 151-154
 
 generator client {
   provider = "prisma-client-js"
@@ -67,26 +68,37 @@ enum UserStatus {
 }
 
 model User {
-  id                 String     @id @default(uuid())
-  name               String
-  email              String     @unique
-  emailVerifiedAt    DateTime?  @map("email_verified_at")
-  passwordHash       String?    @map("password_hash") @db.Text
-  phone              String?
-  phoneVerifiedAt    DateTime?  @map("phone_verified_at")
-  avatarUrl          String?    @map("avatar_url")
-  preferredLanguage  String     @default("en") @map("preferred_language")
-  status             UserStatus @default(ACTIVE)
-  createdAt          DateTime   @default(now()) @map("created_at")
-  updatedAt          DateTime   @updatedAt @map("updated_at")
-  deletedAt          DateTime?  @map("deleted_at")
+  id                String     @id @default(uuid())
+  name              String
+  email             String     @unique
+  emailVerifiedAt   DateTime?  @map("email_verified_at")
+  passwordHash      String?    @map("password_hash") @db.Text
+  phone             String?
+  phoneVerifiedAt   DateTime?  @map("phone_verified_at")
+  avatarUrl         String?    @map("avatar_url")
+  preferredLanguage String     @default("en") @map("preferred_language")
+  status            UserStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+  deletedAt         DateTime?  @map("deleted_at")
 
   // NextAuth relations
   accounts Account[]
   sessions Session[]
 
-  // Domain relations (expanded in later iterations)
+  // Org relations
   memberships Membership[]
+
+  // Report relations (Iteration 2)
+  reports               Report[]             @relation("ReporterReports")
+  reportEventActions    ReportEvent[]        @relation("ReportEventActor")
+  confirmations         ReportConfirmation[]
+  resolutionFeedbacks   ResolutionFeedback[]
+  assigneeAssignments   Assignment[]         @relation("AssigneeAssignments")
+  assignedByAssignments Assignment[]         @relation("AssignedByAssignments")
+  notifications         Notification[]
+  devices               Device[]
+  auditLogs             AuditLog[]           @relation("AuditLogActor")
 
   @@index([email])
   @@map("users")
@@ -123,7 +135,15 @@ model Organization {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  memberships Membership[]
+  memberships  Membership[]
+  departments Department[]
+  // Report relations (Iteration 2)
+  reports      Report[]
+  assignments  Assignment[]
+  routingRules RoutingRule[]
+  auditLogs    AuditLog[]
+
+
 
   @@index([slug])
   @@map("organizations")
@@ -168,4 +188,479 @@ model Membership {
   @@index([userId])
   @@index([organizationId])
   @@map("memberships")
+}
+
+// ============================================================
+// DOMAIN: DEPARTMENT
+// Spec section 53
+// ============================================================
+
+enum DepartmentStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+model Department {
+  id             String           @id @default(uuid())
+  organizationId String           @map("organization_id")
+  name           String
+  slug           String
+  description    String?
+  status         DepartmentStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  teams        Team[]
+  assignments  Assignment[]
+  routingRules RoutingRule[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@map("departments")
+}
+
+// ============================================================
+// DOMAIN: TEAM
+// Spec section 54
+// ============================================================
+
+enum TeamStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Team {
+  id           String     @id @default(uuid())
+  departmentId String     @map("department_id")
+  name         String
+  slug         String
+  description  String?
+  status       TeamStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  department  Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@map("teams")
+}
+
+// ============================================================
+// DOMAIN: CATEGORY
+// Spec section 55, 11
+// ============================================================
+
+model Category {
+  id          String   @id @default(uuid())
+  parentId    String?  @map("parent_id")
+  name        String
+  slug        String   @unique
+  description String?
+  icon        String?
+  colorToken  String?  @map("color_token")
+  sortOrder   Int      @default(0) @map("sort_order")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  parent       Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children     Category[]    @relation("CategoryHierarchy")
+  reports      Report[]
+  routingRules RoutingRule[]
+
+  @@index([slug])
+  @@map("categories")
+}
+
+// ============================================================
+// DOMAIN: REPORT
+// Spec sections 56, 8, 9, 10, 12
+// ============================================================
+
+enum ReportStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  NEEDS_INFORMATION
+  VERIFIED
+  REJECTED
+  DUPLICATE
+  ASSIGNED
+  IN_PROGRESS
+  BLOCKED
+  RESOLVED
+  AWAITING_CONFIRMATION
+  CLOSED
+  REOPENED
+  CANCELLED
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Report {
+  id                   String       @id @default(uuid())
+  publicReference      String       @unique @map("public_reference")
+  reporterId           String       @map("reporter_id")
+  organizationId       String?      @map("organization_id")
+  categoryId           String       @map("category_id")
+  title                String
+  description          String       @db.Text
+  severity             Severity     @default(MEDIUM)
+  status               ReportStatus @default(SUBMITTED)
+  latitude             Float?
+  longitude            Float?
+  locationAccuracy     Float?       @map("location_accuracy")
+  formattedAddress     String?      @map("formatted_address")
+  administrativeArea   String?      @map("administrative_area")
+  reportedAt           DateTime     @default(now()) @map("reported_at")
+  verifiedAt           DateTime?    @map("verified_at")
+  resolvedAt           DateTime?    @map("resolved_at")
+  closedAt             DateTime?    @map("closed_at")
+  expectedResolutionAt DateTime?    @map("expected_resolution_at")
+  priorityScore        Float?       @map("priority_score")
+  priorityVersion      Int          @default(0) @map("priority_version")
+  confirmationCount    Int          @default(0) @map("confirmation_count")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+  deletedAt            DateTime?    @map("deleted_at")
+
+  reporter     User          @relation("ReporterReports", fields: [reporterId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  category     Category      @relation(fields: [categoryId], references: [id])
+
+  media                ReportMedia[]
+  events               ReportEvent[]
+  assignments          Assignment[]
+  confirmations        ReportConfirmation[]
+  resolutionFeedback   ResolutionFeedback[]
+  aiJobs               AIJob[]
+  aiAnalyses           AIAnalysis[]
+  priorityCalculations PriorityCalculation[]
+
+  @@index([publicReference])
+  @@index([reporterId])
+  @@index([organizationId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([severity])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@index([latitude])
+  @@index([longitude])
+  @@map("reports")
+}
+
+// ============================================================
+// DOMAIN: REPORT MEDIA
+// Spec section 57
+// ============================================================
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+model ReportMedia {
+  id              String    @id @default(uuid())
+  reportId        String    @map("report_id")
+  type            MediaType
+  storageKey      String    @map("storage_key")
+  publicUrl       String?   @map("public_url")
+  mimeType        String?   @map("mime_type")
+  sizeBytes       Int?      @map("size_bytes")
+  width           Int?
+  height          Int?
+  durationSeconds Float?    @map("duration_seconds")
+  checksum        String?
+  metadata        Json?     @default("{}")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("report_media")
+}
+
+// ============================================================
+// DOMAIN: REPORT EVENT
+// Spec section 58
+// ============================================================
+
+enum EventVisibility {
+  PUBLIC
+  INTERNAL
+  SYSTEM
+}
+
+model ReportEvent {
+  id          String          @id @default(uuid())
+  reportId    String          @map("report_id")
+  actorUserId String?         @map("actor_user_id")
+  eventType   String
+  fromStatus  ReportStatus?   @map("from_status")
+  toStatus    ReportStatus?   @map("to_status")
+  message     String?         @db.Text
+  metadata    Json?           @default("{}")
+  visibility  EventVisibility @default(SYSTEM)
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  report    Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  actorUser User?  @relation("ReportEventActor", fields: [actorUserId], references: [id])
+
+  @@index([reportId])
+  @@map("report_events")
+}
+
+// ============================================================
+// DOMAIN: ASSIGNMENT
+// Spec section 59
+// ============================================================
+
+model Assignment {
+  id             String    @id @default(uuid())
+  reportId       String    @map("report_id")
+  organizationId String    @map("organization_id")
+  departmentId   String    @map("department_id")
+  teamId         String?   @map("team_id")
+  assigneeId     String?   @map("assignee_id")
+  assignedById   String    @map("assigned_by_id")
+  assignedAt     DateTime  @default(now()) @map("assigned_at")
+  unassignedAt   DateTime? @map("unassigned_at")
+  reason         String?   @db.Text
+
+  report       Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+  team         Team?        @relation(fields: [teamId], references: [id])
+  assignee     User?        @relation("AssigneeAssignments", fields: [assigneeId], references: [id])
+  assignedBy   User         @relation("AssignedByAssignments", fields: [assignedById], references: [id])
+
+  @@index([reportId])
+  @@index([departmentId])
+  @@map("assignments")
+}
+
+// ============================================================
+// DOMAIN: REPORT CONFIRMATION
+// Spec section 60
+// ============================================================
+
+model ReportConfirmation {
+  id        String   @id @default(uuid())
+  reportId  String   @map("report_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId])
+  @@map("report_confirmations")
+}
+
+// ============================================================
+// DOMAIN: RESOLUTION FEEDBACK
+// Spec section 61
+// ============================================================
+
+enum FeedbackResult {
+  CONFIRMED_FIXED
+  NOT_FIXED
+}
+
+model ResolutionFeedback {
+  id        String         @id @default(uuid())
+  reportId  String         @map("report_id")
+  userId    String         @map("user_id")
+  result    FeedbackResult
+  comment   String?        @db.Text
+  mediaId   String?        @map("media_id")
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@map("resolution_feedback")
+}
+
+// ============================================================
+// DOMAIN: AI JOB
+// Spec section 65
+// ============================================================
+
+enum AIJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model AIJob {
+  id              String      @id @default(uuid())
+  reportId        String?     @map("report_id")
+  type            String
+  status          AIJobStatus @default(PENDING)
+  provider        String?
+  model           String?
+  attempts        Int         @default(0)
+  inputReference  String?     @map("input_reference")
+  outputReference String?     @map("output_reference")
+  error           String?     @db.Text
+  startedAt       DateTime?   @map("started_at")
+  completedAt     DateTime?   @map("completed_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  report Report? @relation(fields: [reportId], references: [id])
+
+  @@index([status])
+  @@index([type])
+  @@map("ai_jobs")
+}
+
+// ============================================================
+// DOMAIN: AI ANALYSIS
+// Spec section 66
+// ============================================================
+
+model AIAnalysis {
+  id           String   @id @default(uuid())
+  reportId     String   @map("report_id")
+  type         String
+  provider     String?
+  model        String?
+  modelVersion String?  @map("model_version")
+  confidence   Float?
+  result       Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("ai_analyses")
+}
+
+// ============================================================
+// DOMAIN: PRIORITY CALCULATION
+// Spec section 67
+// ============================================================
+
+model PriorityCalculation {
+  id        String   @id @default(uuid())
+  reportId  String   @map("report_id")
+  version   Int
+  score     Float
+  factors   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("priority_calculations")
+}
+
+// ============================================================
+// DOMAIN: ROUTING RULE
+// Spec sections 68, 32
+// ============================================================
+
+model RoutingRule {
+  id                   String   @id @default(uuid())
+  categoryId           String   @map("category_id")
+  organizationId       String   @map("organization_id")
+  departmentId         String   @map("department_id")
+  geographicConstraint Json?    @map("geographic_constraint")
+  severityConstraint   Json?    @map("severity_constraint")
+  priority             Int      @default(0)
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  category     Category     @relation(fields: [categoryId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+
+  @@map("routing_rules")
+}
+
+// ============================================================
+// DOMAIN: NOTIFICATION
+// Spec section 69
+// ============================================================
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  body      String    @db.Text
+  data      Json?     @default("{}")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([readAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// DOMAIN: DEVICE
+// Spec section 70
+// ============================================================
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+  WEB
+}
+
+model Device {
+  id         String         @id @default(uuid())
+  userId     String         @map("user_id")
+  platform   DevicePlatform
+  pushToken  String?        @unique @map("push_token")
+  appVersion String?        @map("app_version")
+  deviceName String?        @map("device_name")
+  lastSeenAt DateTime?      @map("last_seen_at")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("devices")
+}
+
+// ============================================================
+// DOMAIN: AUDIT LOG
+// Spec section 71 — Append-only. Never update or delete.
+// ============================================================
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  organizationId String?  @map("organization_id")
+  actorUserId    String?  @map("actor_user_id")
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String   @map("entity_id")
+  before         Json?    @default("{}")
+  after          Json?    @default("{}")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  requestId      String?  @map("request_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  actorUser    User?         @relation("AuditLogActor", fields: [actorUserId], references: [id])
+
+  @@index([entityType])
+  @@index([entityId])
+  @@map("audit_logs")
 }
