@@ -56,6 +56,12 @@ export async function AuthNav() {
       >
         Profile
       </Link>
+      <Link
+        href="/authority"
+        className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 hover:opacity-90"
+      >
+        Authority Portal
+      </Link>
       <form action={signOutAction}>
         <button
           type="submit"

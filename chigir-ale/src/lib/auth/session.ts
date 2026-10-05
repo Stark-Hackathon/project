@@ -109,3 +109,26 @@ export async function isPlatformAdmin(userId: string): Promise<boolean> {
   });
   return membership !== null;
 }
+
+/**
+ * Require the user to be authenticated and have authority staff privileges.
+ */
+export async function requireAuthorityUser() {
+  const user = await requireAuth();
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      status: "ACTIVE",
+      role: { in: ["STAFF", "FIELD_WORKER", "DEPARTMENT_MANAGER", "ORG_ADMIN", "PLATFORM_ADMIN"] },
+    },
+    include: {
+      organization: true,
+    },
+  });
+
+  return {
+    ...user,
+    membership: membership ?? null,
+  };
+}

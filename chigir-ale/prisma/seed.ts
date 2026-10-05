@@ -1,9 +1,10 @@
 /**
  * Chigir Ale - Database Seed Script
- * Spec: Section 11 — Infrastructure Categories
- * Seeds the initial category hierarchy for the platform.
+ * Spec: Sections 11 (Categories), 32 (Routing), 52 (Org), 53 (Departments), 54 (Teams)
+ * Seeds the initial category hierarchy, municipality organization, operational
+ * departments, maintenance teams, and default routing rules.
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, OrganizationType } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -53,8 +54,50 @@ const CATEGORIES = [
   },
 ];
 
+const DEPARTMENTS = [
+  {
+    name: "Roads & Civil Infrastructure",
+    slug: "roads-infrastructure",
+    description: "Maintenance of roads, bridges, pavements, and public structures.",
+    teams: [
+      { name: "Pothole & Pavement Repair Crew", slug: "pavement-crew" },
+      { name: "Bridge & Civil Structures Team", slug: "bridges-team" },
+    ],
+  },
+  {
+    name: "Water & Sewerage Authority",
+    slug: "water-sewerage",
+    description: "Management of public water pipelines, drainage, and sewerage systems.",
+    teams: [
+      { name: "Water Main Leak Rapid Response", slug: "water-leak-crew" },
+      { name: "Drainage & Flood Clearance Team", slug: "drainage-team" },
+    ],
+  },
+  {
+    name: "Electricity & Power Utility",
+    slug: "electricity-power",
+    description: "Management of power distribution grids, transformers, and public streetlights.",
+    teams: [
+      { name: "Streetlights Maintenance Team", slug: "streetlights-team" },
+      { name: "Grid & Outage Response Unit", slug: "grid-response-team" },
+    ],
+  },
+  {
+    name: "Environmental Sanitation & Waste",
+    slug: "sanitation-waste",
+    description: "Municipal waste collection, public dumps, and neighborhood sanitation.",
+    teams: [
+      { name: "Solid Waste Collection Squad", slug: "waste-squad" },
+      { name: "Public Sanitation Team", slug: "sanitation-team" },
+    ],
+  },
+];
+
 async function main() {
-  console.log("🌱 Seeding categories …");
+  console.log("🌱 Seeding Chigir Ale database …");
+
+  // 1. Seed Categories
+  const categoryMap = new Map<string, string>();
   for (const parent of CATEGORIES) {
     const { children, ...parentData } = parent;
     const parentCat = await prisma.category.upsert({
@@ -62,7 +105,9 @@ async function main() {
       update: parentData,
       create: { ...parentData, description: `${parentData.name} category` },
     });
-    console.log(`  ✓ ${parentCat.name}`);
+    categoryMap.set(parentCat.slug, parentCat.id);
+    console.log(`  ✓ Category: ${parentCat.name}`);
+
     if (children) {
       for (const child of children) {
         const childCat = await prisma.category.upsert({
@@ -70,10 +115,102 @@ async function main() {
           update: child,
           create: { ...child, parentId: parentCat.id, description: `${child.name} sub‑category` },
         });
-        console.log(`    ↳ ${childCat.name}`);
+        categoryMap.set(childCat.slug, childCat.id);
+        console.log(`    ↳ Subcategory: ${childCat.name}`);
       }
     }
   }
+
+  // 2. Seed Municipality Organization
+  const municipality = await prisma.organization.upsert({
+    where: { slug: "addis-ababa-city-admin" },
+    update: { name: "Addis Ababa City Administration" },
+    create: {
+      name: "Addis Ababa City Administration",
+      slug: "addis-ababa-city-admin",
+      type: OrganizationType.MUNICIPALITY,
+      description: "Primary municipal government authority for Addis Ababa.",
+    },
+  });
+  console.log(`  ✓ Organization: ${municipality.name}`);
+
+  // 3. Seed Departments & Teams
+  const departmentMap = new Map<string, string>();
+  for (const dept of DEPARTMENTS) {
+    const department = await prisma.department.upsert({
+      where: {
+        organizationId_slug: {
+          organizationId: municipality.id,
+          slug: dept.slug,
+        },
+      },
+      update: { name: dept.name, description: dept.description },
+      create: {
+        name: dept.name,
+        slug: dept.slug,
+        description: dept.description,
+        organizationId: municipality.id,
+      },
+    });
+    departmentMap.set(department.slug, department.id);
+    console.log(`  ✓ Department: ${department.name}`);
+
+    for (const team of dept.teams) {
+      const existingTeam = await prisma.team.findFirst({
+        where: { departmentId: department.id, slug: team.slug },
+      });
+      if (!existingTeam) {
+        await prisma.team.create({
+          data: {
+            name: team.name,
+            slug: team.slug,
+            departmentId: department.id,
+          },
+        });
+        console.log(`    ↳ Team: ${team.name}`);
+      }
+    }
+  }
+
+  // 4. Seed Standard Routing Rules (Spec Section 32)
+  const ROUTING_MAPPINGS = [
+    { categorySlug: "roads", deptSlug: "roads-infrastructure", priority: 10 },
+    { categorySlug: "bridges", deptSlug: "roads-infrastructure", priority: 10 },
+    { categorySlug: "traffic-infrastructure", deptSlug: "roads-infrastructure", priority: 10 },
+    { categorySlug: "water", deptSlug: "water-sewerage", priority: 10 },
+    { categorySlug: "drainage", deptSlug: "water-sewerage", priority: 10 },
+    { categorySlug: "electricity", deptSlug: "electricity-power", priority: 10 },
+    { categorySlug: "streetlights", deptSlug: "electricity-power", priority: 10 },
+    { categorySlug: "waste-management", deptSlug: "sanitation-waste", priority: 10 },
+    { categorySlug: "sanitation", deptSlug: "sanitation-waste", priority: 10 },
+  ];
+
+  for (const rule of ROUTING_MAPPINGS) {
+    const catId = categoryMap.get(rule.categorySlug);
+    const deptId = departmentMap.get(rule.deptSlug);
+    if (catId && deptId) {
+      const existingRule = await prisma.routingRule.findFirst({
+        where: {
+          categoryId: catId,
+          organizationId: municipality.id,
+          departmentId: deptId,
+        },
+      });
+      if (!existingRule) {
+        await prisma.routingRule.create({
+          data: {
+            categoryId: catId,
+            organizationId: municipality.id,
+            departmentId: deptId,
+            priority: rule.priority,
+            active: true,
+          },
+        });
+        console.log(`    ↳ Routing Rule: ${rule.categorySlug} -> ${rule.deptSlug}`);
+      }
+    }
+  }
+
   console.log("✅ Seed complete.");
 }
 
