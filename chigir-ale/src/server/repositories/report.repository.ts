@@ -95,6 +95,65 @@ export class ReportRepository {
   }
 
   /**
+   * Find a public report view by its reference number.
+   * Strips all internal authority data, staff identities, and private internal notes.
+   * Spec: Section 18 (Location privacy), 31 (Public vs internal separation)
+   */
+  static async findPublicByReference(publicReference: string) {
+    return prisma.report.findUnique({
+      where: { publicReference, deletedAt: null },
+      select: {
+        id: true,
+        publicReference: true,
+        title: true,
+        description: true,
+        severity: true,
+        status: true,
+        formattedAddress: true,
+        administrativeArea: true,
+        reportedAt: true,
+        verifiedAt: true,
+        resolvedAt: true,
+        closedAt: true,
+        confirmationCount: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            icon: true,
+            colorToken: true,
+          },
+        },
+        media: {
+          select: {
+            id: true,
+            type: true,
+            publicUrl: true,
+            storageKey: true,
+          },
+        },
+        events: {
+          where: {
+            visibility: "PUBLIC",
+          },
+          select: {
+            id: true,
+            eventType: true,
+            fromStatus: true,
+            toStatus: true,
+            message: true,
+            createdAt: true,
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
+        },
+      },
+    });
+  }
+
+  /**
    * Transition the status of a report.
    * Atomically updates status, creates an event, and logs the audit.
    */

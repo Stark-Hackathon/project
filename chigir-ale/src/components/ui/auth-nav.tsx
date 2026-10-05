@@ -7,7 +7,13 @@ export async function AuthNav() {
 
   if (!session?.user) {
     return (
-      <nav className="flex gap-3 items-center" aria-label="Authentication navigation">
+      <nav className="flex gap-4 items-center" aria-label="Authentication navigation">
+        <Link
+          href="/citizen/report/new"
+          className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+        >
+          + Report an Issue
+        </Link>
         <Link
           href="/auth/sign-in"
           className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
@@ -16,26 +22,38 @@ export async function AuthNav() {
         </Link>
         <Link
           href="/auth/sign-up"
-          className="text-sm bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 font-medium"
+          className="text-sm bg-emerald-600 text-white px-3.5 py-1.5 rounded-lg hover:bg-emerald-700 font-medium"
         >
-          Create account
+          Sign up
         </Link>
       </nav>
     );
   }
 
   return (
-    <nav className="flex gap-3 items-center" aria-label="User navigation">
+    <nav className="flex gap-4 items-center" aria-label="User navigation">
+      <Link
+        href="/citizen/report/new"
+        className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+      >
+        + Report Issue
+      </Link>
+      <Link
+        href="/citizen/reports"
+        className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
+      >
+        My Reports
+      </Link>
       <Link
         href="/dashboard"
-        className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
+        className="text-sm font-medium text-gray-900 dark:text-white hover:text-emerald-600"
       >
         {session.user.name}
       </Link>
       <form action={signOutAction}>
         <button
           type="submit"
-          className="text-sm text-gray-600 dark:text-gray-400 hover:text-red-600"
+          className="text-sm text-gray-500 dark:text-gray-400 hover:text-red-600 cursor-pointer"
         >
           Sign out
         </button>
