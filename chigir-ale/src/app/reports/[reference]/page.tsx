@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { ReportRepository } from "@/server/repositories/report.repository";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge, SeverityBadge } from "@/components/ui/badge";
+import { CommunityInteractions } from "@/features/community/components/community-interactions";
+import { getCommunityInteractionState } from "@/features/community/actions";
 
 interface ReportDetailPageProps {
   params: Promise<{
@@ -36,6 +38,11 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
   if (!report) {
     notFound();
   }
+
+  const interactionStateRes = await getCommunityInteractionState(report.id);
+  const interactionState = interactionStateRes.success
+    ? interactionStateRes.data
+    : { hasUpvoted: false, hasConfirmed: false };
 
   // Determine current lifecycle step index
   const currentStepIndex = LIFECYCLE_STEPS.findIndex(
@@ -127,6 +134,16 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
                 })}
               </ol>
             </div>
+
+            {/* Community Interactions: Upvotes, Confirmations & Resolution Feedback */}
+            <CommunityInteractions
+              reportId={report.id}
+              initialUpvoteCount={report.upvoteCount}
+              initialConfirmationCount={report.confirmationCount}
+              initialHasUpvoted={interactionState.hasUpvoted}
+              initialHasConfirmed={interactionState.hasConfirmed}
+              status={report.status}
+            />
 
             {/* Category & Details */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

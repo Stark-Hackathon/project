@@ -116,6 +116,7 @@ export class ReportRepository {
         resolvedAt: true,
         closedAt: true,
         confirmationCount: true,
+        upvoteCount: true,
         category: {
           select: {
             id: true,

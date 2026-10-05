@@ -39,16 +39,22 @@ export async function AuthNav() {
         + Report Issue
       </Link>
       <Link
+        href="/citizen/nearby"
+        className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
+      >
+        Nearby Issues
+      </Link>
+      <Link
         href="/citizen/reports"
         className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
       >
         My Reports
       </Link>
       <Link
-        href="/dashboard"
+        href="/citizen/profile"
         className="text-sm font-medium text-gray-900 dark:text-white hover:text-emerald-600"
       >
-        {session.user.name}
+        Profile
       </Link>
       <form action={signOutAction}>
         <button

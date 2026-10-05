@@ -99,6 +99,8 @@ model User {
   notifications         Notification[]
   devices               Device[]
   auditLogs             AuditLog[]           @relation("AuditLogActor")
+  upvotes               ReportUpvote[]
+  reviewedDuplicates    DuplicateCandidate[] @relation("ReviewedDuplicateCandidates")
 
   @@index([email])
   @@map("users")
@@ -142,6 +144,7 @@ model Organization {
   assignments  Assignment[]
   routingRules RoutingRule[]
   auditLogs    AuditLog[]
+  incidents    Incident[]
 
 
 
@@ -269,6 +272,7 @@ model Category {
   children     Category[]    @relation("CategoryHierarchy")
   reports      Report[]
   routingRules RoutingRule[]
+  incidents    Incident[]
 
   @@index([slug])
   @@map("categories")
@@ -326,6 +330,7 @@ model Report {
   priorityScore        Float?       @map("priority_score")
   priorityVersion      Int          @default(0) @map("priority_version")
   confirmationCount    Int          @default(0) @map("confirmation_count")
+  upvoteCount          Int          @default(0) @map("upvote_count")
   createdAt            DateTime     @default(now()) @map("created_at")
   updatedAt            DateTime     @updatedAt @map("updated_at")
   deletedAt            DateTime?    @map("deleted_at")
@@ -338,7 +343,11 @@ model Report {
   events               ReportEvent[]
   assignments          Assignment[]
   confirmations        ReportConfirmation[]
+  upvotes              ReportUpvote[]
   resolutionFeedback   ResolutionFeedback[]
+  incidentReports      IncidentReport[]
+  sourceDuplicates     DuplicateCandidate[] @relation("SourceDuplicateCandidates")
+  targetDuplicates     DuplicateCandidate[] @relation("TargetDuplicateCandidates")
   aiJobs               AIJob[]
   aiAnalyses           AIAnalysis[]
   priorityCalculations PriorityCalculation[]
@@ -663,4 +672,123 @@ model AuditLog {
   @@index([entityType])
   @@index([entityId])
   @@map("audit_logs")
+}
+
+// ============================================================
+// DOMAIN: REPORT UPVOTE (Community Support)
+// Spec section 24 — Upvoting Relevant Problems
+// ============================================================
+
+model ReportUpvote {
+  id        String   @id @default(uuid())
+  reportId  String   @map("report_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId])
+  @@index([reportId])
+  @@index([userId])
+  @@map("report_upvotes")
+}
+
+// ============================================================
+// DOMAIN: INCIDENT MODEL
+// Spec section 62 — Underlying real-world infrastructure problem
+// ============================================================
+
+model Incident {
+  id                String       @id @default(uuid())
+  organizationId    String?      @map("organization_id")
+  categoryId        String       @map("category_id")
+  title             String
+  description       String?      @db.Text
+  status            ReportStatus @default(SUBMITTED)
+  severity          Severity     @default(MEDIUM)
+  latitude          Float?
+  longitude         Float?
+  formattedAddress  String?      @map("formatted_address")
+  confirmationCount Int          @default(0) @map("confirmation_count")
+  upvoteCount       Int          @default(0) @map("upvote_count")
+  reportCount       Int          @default(0) @map("report_count")
+  openedAt          DateTime     @default(now()) @map("opened_at")
+  resolvedAt        DateTime?    @map("resolved_at")
+  closedAt          DateTime?    @map("closed_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization    Organization?    @relation(fields: [organizationId], references: [id])
+  category        Category         @relation(fields: [categoryId], references: [id])
+  incidentReports IncidentReport[]
+
+  @@index([organizationId])
+  @@index([categoryId])
+  @@index([status])
+  @@map("incidents")
+}
+
+// ============================================================
+// DOMAIN: INCIDENT-REPORT RELATIONSHIP
+// Spec section 63
+// ============================================================
+
+enum IncidentRelationshipType {
+  PRIMARY
+  DUPLICATE
+  RELATED
+  CONFIRMATION
+}
+
+model IncidentReport {
+  id               String                   @id @default(uuid())
+  incidentId       String                   @map("incident_id")
+  reportId         String                   @map("report_id")
+  relationshipType IncidentRelationshipType @default(PRIMARY) @map("relationship_type")
+  confidence       Float?
+  createdAt        DateTime                 @default(now()) @map("created_at")
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  report   Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, reportId])
+  @@index([incidentId])
+  @@index([reportId])
+  @@map("incident_reports")
+}
+
+// ============================================================
+// DOMAIN: DUPLICATE CANDIDATE
+// Spec section 64
+// ============================================================
+
+enum DuplicateStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model DuplicateCandidate {
+  id                     String          @id @default(uuid())
+  sourceReportId         String          @map("source_report_id")
+  candidateReportId      String          @map("candidate_report_id")
+  confidence             Float
+  distanceMeters         Float?          @map("distance_meters")
+  textSimilarity         Float?          @map("text_similarity")
+  categoryMatch          Boolean         @default(false) @map("category_match")
+  timeDifferenceMinutes  Float?          @map("time_difference_minutes")
+  status                 DuplicateStatus @default(PENDING)
+  createdAt              DateTime        @default(now()) @map("created_at")
+  reviewedAt             DateTime?       @map("reviewed_at")
+  reviewedById           String?         @map("reviewed_by_id")
+
+  sourceReport    Report @relation("SourceDuplicateCandidates", fields: [sourceReportId], references: [id], onDelete: Cascade)
+  candidateReport Report @relation("TargetDuplicateCandidates", fields: [candidateReportId], references: [id], onDelete: Cascade)
+  reviewedBy      User?  @relation("ReviewedDuplicateCandidates", fields: [reviewedById], references: [id])
+
+  @@index([sourceReportId])
+  @@index([candidateReportId])
+  @@index([status])
+  @@map("duplicate_candidates")
 }
