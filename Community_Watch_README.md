@@ -193,6 +193,4 @@ Rather than requiring residents to know which organization to contact or how to 
 
 **See a problem → Report it → Map it → Find the pattern.**
 
----
-
 
