@@ -31,12 +31,25 @@ export const createReportSchema = z.object({
 
 export type CreateReportFormData = z.infer<typeof createReportSchema>;
 
+import { RateLimitService } from "@/server/services/rate-limit.service";
+import { SanitizerService } from "@/server/services/sanitizer.service";
+
 export async function createReportAction(
   rawData: CreateReportFormData
 ): Promise<Result<{ reportId: string; publicReference: string }>> {
   const user = await getAuthenticatedUser();
   if (!user) {
     return err(new Error("UNAUTHORIZED: Please sign in to submit a report."));
+  }
+
+  // Rate Limiting per Spec Section 81
+  const rateLimit = RateLimitService.check(user.id, "REPORT_CREATION");
+  if (!rateLimit.success) {
+    return err(
+      new Error(
+        `Rate limit exceeded: Please wait ${rateLimit.retryAfterSeconds ?? 60} seconds before submitting another incident.`
+      )
+    );
   }
 
   const parsed = createReportSchema.safeParse(rawData);
@@ -47,13 +60,17 @@ export async function createReportAction(
 
   const data = parsed.data;
 
+  // XSS input sanitization per Spec Section 80 & 83
+  const cleanTitle = SanitizerService.sanitizeText(data.title);
+  const cleanDescription = SanitizerService.sanitizeText(data.description);
+
   try {
     const report = await ReportRepository.create(
       {
         reporterId: user.id,
         categoryId: data.categoryId,
-        title: data.title,
-        description: data.description,
+        title: cleanTitle,
+        description: cleanDescription,
         severity: data.severity,
         latitude: data.latitude,
         longitude: data.longitude,

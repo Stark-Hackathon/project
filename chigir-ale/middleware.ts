@@ -24,20 +24,38 @@ export default auth((req: NextRequest & { auth: { user?: { id?: string } } | nul
   const { pathname } = req.nextUrl;
   const session = req.auth;
 
+  // Generate or preserve correlation request ID (Spec §87)
+  const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+
   const isProtected = PROTECTED_PATTERNS.some((p) => p.test(pathname));
   const isAuthOnly = AUTH_ONLY_PATTERNS.some((p) => p.test(pathname));
 
   if (isProtected && !session?.user) {
     const signInUrl = new URL("/auth/sign-in", req.url);
     signInUrl.searchParams.set("callbackUrl", pathname);
-    return NextResponse.redirect(signInUrl);
+    const redirectRes = NextResponse.redirect(signInUrl);
+    redirectRes.headers.set("x-request-id", requestId);
+    return redirectRes;
   }
 
   if (isAuthOnly && session?.user) {
-    return NextResponse.redirect(new URL("/", req.url));
+    const redirectRes = NextResponse.redirect(new URL("/", req.url));
+    redirectRes.headers.set("x-request-id", requestId);
+    return redirectRes;
   }
 
-  return NextResponse.next();
+  // Pass request-id to downstream handlers
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-request-id", requestId);
+
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
+
+  response.headers.set("x-request-id", requestId);
+  return response;
 });
 
 export const config = {

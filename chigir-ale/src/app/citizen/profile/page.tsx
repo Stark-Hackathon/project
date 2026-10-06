@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { signOutAction } from "@/features/auth/actions";
 import { Button } from "@/components/ui/button";
+import { DeleteAccountButton } from "@/features/account/components/delete-account-button";
 
 export const metadata: Metadata = {
   title: "Citizen Profile — Chigir Ale",
@@ -130,10 +131,25 @@ export default async function ProfilePage() {
           </CardContent>
         </Card>
 
+        {/* Account Deletion & Data Governance (Spec Section 123) */}
+        <Card className="border-rose-100 dark:border-rose-950/50">
+          <CardHeader>
+            <CardTitle className="text-sm font-semibold text-rose-900 dark:text-rose-200">
+              Account Governance &amp; Data Deletion
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs text-slate-600 dark:text-slate-400">
+              You may exercise your right to erasure at any time. Per civic data governance rules, personal identifiers are erased while infrastructure incident records remain preserved to ensure public safety.
+            </p>
+            <DeleteAccountButton />
+          </CardContent>
+        </Card>
+
         {/* Sign Out Action */}
         <div className="pt-2 flex justify-end">
           <form action={signOutAction}>
-            <Button type="submit" variant="outline" className="text-rose-600 hover:text-rose-700">
+            <Button type="submit" variant="outline" className="text-slate-600 hover:text-slate-800 dark:text-slate-400">
               Sign Out of Chigir Ale
             </Button>
           </form>

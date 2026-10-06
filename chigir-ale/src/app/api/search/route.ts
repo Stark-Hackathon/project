@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { SearchService } from "@/server/services/search.service";
+import { RateLimitService } from "@/server/services/rate-limit.service";
+import { SanitizerService } from "@/server/services/sanitizer.service";
+import { ObservabilityService } from "@/server/services/observability.service";
 import type { ReportStatus, Severity } from "@prisma/client";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const q = searchParams.get("q") || undefined;
+  const rawQ = searchParams.get("q") || undefined;
+  const q = rawQ ? SanitizerService.sanitizeText(rawQ) : undefined;
   const ref = searchParams.get("ref") || undefined;
   const categoryId = searchParams.get("category") || undefined;
   const status = (searchParams.get("status") as ReportStatus) || undefined;
@@ -16,6 +20,20 @@ export async function GET(request: Request) {
   const offset = parseInt(searchParams.get("offset") ?? "0", 10);
 
   const user = await getAuthenticatedUser();
+  const clientId = user?.id || request.headers.get("x-forwarded-for") || "anonymous_client";
+
+  // Rate Limiting per Spec Section 81
+  const rateLimit = RateLimitService.check(clientId, "SEARCH");
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      ObservabilityService.formatErrorResponse(
+        new Error("RATE_LIMIT_EXCEEDED: Search rate limit exceeded. Please try again shortly."),
+        request.headers.get("x-request-id") || undefined
+      ),
+      { status: 429, headers: RateLimitService.getHeaders(rateLimit) }
+    );
+  }
+
   let isAuthority = false;
   if (user) {
     const membership = await prisma.membership.findFirst({
@@ -41,9 +59,12 @@ export async function GET(request: Request) {
       onlyPublic: !isAuthority && !ref && !q?.startsWith("CHI-"),
     });
 
-    return NextResponse.json(results);
+    return NextResponse.json(results, { headers: RateLimitService.getHeaders(rateLimit) });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Search failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const errorResponse = ObservabilityService.formatErrorResponse(
+      error,
+      request.headers.get("x-request-id") || undefined
+    );
+    return NextResponse.json(errorResponse, { status: 500 });
   }
 }

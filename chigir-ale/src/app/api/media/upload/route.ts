@@ -4,6 +4,8 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { StorageService } from "@/server/services/storage.service";
+import { RateLimitService } from "@/server/services/rate-limit.service";
+import { ObservabilityService } from "@/server/services/observability.service";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,6 +21,18 @@ export async function POST(req: NextRequest) {
 
     // 1. Verify signed token
     const tokenPayload = StorageService.verifyUploadToken(token);
+
+    // Rate Limiting per Spec Section 81
+    const rateLimit = RateLimitService.check(tokenPayload.userId, "MEDIA_UPLOAD");
+    if (!rateLimit.success) {
+      return NextResponse.json(
+        ObservabilityService.formatErrorResponse(
+          new Error("RATE_LIMIT_EXCEEDED: Media upload limit exceeded. Please try again later."),
+          req.headers.get("x-request-id") || undefined
+        ),
+        { status: 429, headers: RateLimitService.getHeaders(rateLimit) }
+      );
+    }
 
     // 2. Parse file from multipart formData
     const formData = await req.formData();
@@ -53,15 +67,21 @@ export async function POST(req: NextRequest) {
 
     const publicUrl = StorageService.getSignedReadUrl(tokenPayload.storageKey);
 
-    return NextResponse.json({
-      success: true,
-      storageKey: tokenPayload.storageKey,
-      publicUrl,
-      sizeBytes: file.size,
-      mimeType: tokenPayload.mimeType,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        storageKey: tokenPayload.storageKey,
+        publicUrl,
+        sizeBytes: file.size,
+        mimeType: tokenPayload.mimeType,
+      },
+      { headers: RateLimitService.getHeaders(rateLimit) }
+    );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Media upload failed.";
-    return NextResponse.json({ success: false, error: message }, { status: 400 });
+    const errorResponse = ObservabilityService.formatErrorResponse(
+      error,
+      req.headers.get("x-request-id") || undefined
+    );
+    return NextResponse.json(errorResponse, { status: 400 });
   }
 }

@@ -4,12 +4,14 @@
  * Chigir Ale - Auth Server Actions
  * Spec: Section 7.1 (Authentication requirements)
  */
-import { signIn, signOut } from "@/auth";
+import { signIn, signOut, auth } from "@/auth";
 import { AuthError } from "next-auth";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import type { Result } from "@/types";
+import { RateLimitService } from "@/server/services/rate-limit.service";
+import { PrivacyService } from "@/server/services/privacy.service";
 
 const signUpSchema = z.object({
   name: z.string().min(2).max(100),
@@ -70,6 +72,17 @@ export async function signInAction(
 
   const { email, password, callbackUrl } = parsed.data;
 
+  // Rate Limiting on Login per Spec Section 81
+  const rateLimit = RateLimitService.check(email, "LOGIN");
+  if (!rateLimit.success) {
+    return {
+      success: false,
+      error: new Error(
+        `Too many login attempts. Please try again in ${rateLimit.retryAfterSeconds ?? 60} seconds.`
+      ),
+    };
+  }
+
   try {
     await signIn("credentials", {
       email,
@@ -87,4 +100,22 @@ export async function signInAction(
 
 export async function signOutAction(): Promise<void> {
   await signOut({ redirect: false });
+}
+
+export async function deleteAccountAction(): Promise<Result<{ success: boolean }>> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: new Error("Unauthorized: Must be logged in.") };
+  }
+
+  try {
+    await PrivacyService.anonymizeUserAccount(session.user.id);
+    await signOut({ redirect: false });
+    return { success: true, data: { success: true } };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error : new Error("Failed to delete account."),
+    };
+  }
 }
