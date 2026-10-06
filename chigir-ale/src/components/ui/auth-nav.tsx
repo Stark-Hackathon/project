@@ -15,6 +15,12 @@ export async function AuthNav() {
           + Report an Issue
         </Link>
         <Link
+          href="/map"
+          className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+        >
+          City Map
+        </Link>
+        <Link
           href="/auth/sign-in"
           className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
         >
@@ -43,6 +49,12 @@ export async function AuthNav() {
         className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
       >
         Nearby Issues
+      </Link>
+      <Link
+        href="/map"
+        className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
+      >
+        City Map
       </Link>
       <Link
         href="/citizen/reports"

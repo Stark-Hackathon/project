@@ -62,6 +62,18 @@ export class NearbyIssuesService {
   }
 
   /**
+   * Calculate distance in kilometers.
+   */
+  static calculateDistanceKm(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number
+  ): number {
+    return NearbyIssuesService.calculateDistanceMeters(lat1, lon1, lat2, lon2) / 1000;
+  }
+
+  /**
    * Find active reports within a given radius (in kilometers) from a coordinate.
    * Filters out CLOSED or REJECTED reports by default.
    */
