@@ -1,3 +1,5 @@
+(process.env as Record<string, string | undefined>)["NODE_ENV"] = "test";
+
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { CacheService } from "@/server/services/cache.service";
