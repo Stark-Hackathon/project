@@ -9,6 +9,7 @@ import { getAuthenticatedUser } from "@/lib/auth/session";
 import { ReportRepository } from "@/server/repositories/report.repository";
 import { CategoryRepository } from "@/server/repositories/category.repository";
 import { prisma } from "@/lib/db/prisma";
+import { NotificationService } from "@/server/services/notifications";
 import { ok, err, type Result } from "@/types/domain";
 
 export const createReportSchema = z.object({
@@ -73,6 +74,17 @@ export async function createReportAction(
         })),
       });
     }
+
+    // Notify citizen reporter of report creation (Iteration 7)
+    void NotificationService.notifyReportLifecycleEvent({
+      type: "REPORT_SUBMITTED",
+      reportId: report.id,
+      publicReference: report.publicReference,
+      reportTitle: report.title,
+      recipientUserId: user.id,
+      recipientEmail: user.email,
+      recipientName: user.name,
+    }).catch(() => {});
 
     return ok({
       reportId: report.id,

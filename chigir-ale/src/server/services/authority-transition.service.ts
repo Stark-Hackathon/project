@@ -9,6 +9,7 @@ import type { ReportStatus, Severity, Prisma } from "@prisma/client";
 import { ReportStatusService } from "@/server/services/report-status.service";
 import { AuditService } from "@/server/services/audit.service";
 import { PriorityService } from "@/server/services/priority.service";
+import { NotificationService, type NotificationType } from "@/server/services/notifications";
 
 export interface TransitionOptions {
   reason?: string;
@@ -31,7 +32,7 @@ export class AuthorityTransitionService {
     actorUserId: string,
     options: TransitionOptions = {}
   ) {
-    return prisma.$transaction(async (tx) => {
+    const updatedReport = await prisma.$transaction(async (tx) => {
       const current = await tx.report.findUnique({
         where: { id: reportId, deletedAt: null },
         include: {
@@ -151,6 +152,27 @@ export class AuthorityTransitionService {
 
       return updated;
     });
+
+    // Notify citizen reporter of status transition (Spec §41 & §74)
+    // Decoupled from the database transaction
+    let eventType: NotificationType = "STATUS_CHANGED";
+    if (targetStatus === "VERIFIED") eventType = "REPORT_VERIFIED";
+    else if (targetStatus === "RESOLVED") eventType = "REPORT_RESOLVED";
+    else if (targetStatus === "AWAITING_CONFIRMATION") eventType = "CONFIRMATION_REQUEST";
+    else if (targetStatus === "REOPENED") eventType = "REPORT_REOPENED";
+
+    void NotificationService.notifyReportLifecycleEvent({
+      type: eventType,
+      reportId: updatedReport.id,
+      publicReference: updatedReport.publicReference,
+      reportTitle: updatedReport.title,
+      recipientUserId: updatedReport.reporterId,
+      toStatus: targetStatus,
+      severity: updatedReport.severity,
+      message: options.notes || options.reason,
+    }).catch(() => {});
+
+    return updatedReport;
   }
 
   /**

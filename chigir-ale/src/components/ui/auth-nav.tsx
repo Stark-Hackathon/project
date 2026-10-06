@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import Link from "next/link";
 import { signOutAction } from "@/features/auth/actions";
+import { NotificationBell } from "@/features/notifications/components/notification-bell";
 
 export async function AuthNav() {
   const session = await auth();
@@ -68,6 +69,7 @@ export async function AuthNav() {
       >
         Profile
       </Link>
+      <NotificationBell />
       <Link
         href="/authority"
         className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 hover:opacity-90"

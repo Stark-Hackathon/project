@@ -7,6 +7,7 @@ import type { Report, ReportStatus, Prisma } from "@prisma/client";
 import { ReportReferenceService } from "@/server/services/report-reference.service";
 import { ReportStatusService } from "@/server/services/report-status.service";
 import { AuditService } from "@/server/services/audit.service";
+import { NotificationService, type NotificationType } from "@/server/services/notifications";
 
 export interface CreateReportInput {
   reporterId: string;
@@ -168,10 +169,10 @@ export class ReportRepository {
       visibility?: "PUBLIC" | "INTERNAL" | "SYSTEM";
     }
   ): Promise<Report> {
-    return prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.report.findUnique({
         where: { id: reportId, deletedAt: null },
-        select: { id: true, status: true, publicReference: true },
+        select: { id: true, status: true, publicReference: true, title: true, reporterId: true },
       });
       if (!current) throw new Error("NOT_FOUND: Report not found");
 
@@ -183,7 +184,7 @@ export class ReportRepository {
       if (toStatus === "RESOLVED") timestampUpdates.resolvedAt = new Date();
       if (toStatus === "CLOSED") timestampUpdates.closedAt = new Date();
 
-      const updated = await tx.report.update({
+      const updatedReport = await tx.report.update({
         where: { id: reportId },
         data: { status: toStatus, ...timestampUpdates },
       });
@@ -213,8 +214,27 @@ export class ReportRepository {
         tx
       );
 
-      return updated;
+      return updatedReport;
     });
+
+    // Decoupled notification dispatch (Spec §41 & §74)
+    let eventType: NotificationType = "STATUS_CHANGED";
+    if (toStatus === "VERIFIED") eventType = "REPORT_VERIFIED";
+    else if (toStatus === "RESOLVED") eventType = "REPORT_RESOLVED";
+    else if (toStatus === "AWAITING_CONFIRMATION") eventType = "CONFIRMATION_REQUEST";
+    else if (toStatus === "REOPENED") eventType = "REPORT_REOPENED";
+
+    void NotificationService.notifyReportLifecycleEvent({
+      type: eventType,
+      reportId: updated.id,
+      publicReference: updated.publicReference,
+      reportTitle: updated.title,
+      recipientUserId: updated.reporterId,
+      toStatus,
+      message: opts?.message,
+    }).catch(() => {});
+
+    return updated;
   }
 
   /** List reports created by a specific user (citizen view) */

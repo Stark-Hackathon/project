@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db/prisma";
 import type { Assignment } from "@prisma/client";
 import { AuditService } from "@/server/services/audit.service";
 import { ReportStatusService } from "@/server/services/report-status.service";
+import { NotificationService } from "@/server/services/notifications";
 
 export interface AssignReportInput {
   reportId: string;
@@ -32,7 +33,7 @@ export class AssignmentService {
     input: AssignReportInput,
     actorUserId: string
   ): Promise<Assignment> {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const report = await tx.report.findUnique({
         where: { id: input.reportId, deletedAt: null },
         select: {
@@ -40,6 +41,8 @@ export class AssignmentService {
           status: true,
           organizationId: true,
           publicReference: true,
+          reporterId: true,
+          title: true,
         },
       });
 
@@ -154,8 +157,58 @@ export class AssignmentService {
         tx
       );
 
-      return newAssignment;
+      const dept = await tx.department.findUnique({
+        where: { id: input.departmentId },
+        select: { name: true },
+      });
+
+      const assigneeUser = input.assigneeId
+        ? await tx.user.findUnique({
+            where: { id: input.assigneeId },
+            select: { id: true, name: true, email: true },
+          })
+        : null;
+
+      return {
+        assignment: newAssignment,
+        publicReference: report.publicReference,
+        reportTitle: report.title,
+        reporterId: report.reporterId,
+        departmentName: dept?.name,
+        assigneeUser,
+      };
     });
+
+    // Decoupled notification dispatch (Spec §41 & §74)
+    // 1. Notify citizen reporter
+    void NotificationService.notifyReportLifecycleEvent({
+      type: "REPORT_ASSIGNED",
+      reportId: input.reportId,
+      publicReference: result.publicReference,
+      reportTitle: result.reportTitle,
+      recipientUserId: result.reporterId,
+      departmentName: result.departmentName,
+      assigneeName: result.assigneeUser?.name,
+    }).catch(() => {});
+
+    // 2. Notify assignee staff/field worker if designated
+    if (result.assigneeUser) {
+      void NotificationService.createAndDispatch({
+        userId: result.assigneeUser.id,
+        type: "REPORT_ASSIGNED",
+        title: `Assigned: Report #${result.publicReference}`,
+        body: `You have been assigned to handle "${result.reportTitle}".`,
+        actionUrl: `/authority/reports/${result.publicReference}`,
+        recipientEmail: result.assigneeUser.email,
+        recipientName: result.assigneeUser.name,
+        data: {
+          reportId: input.reportId,
+          publicReference: result.publicReference,
+        },
+      }).catch(() => {});
+    }
+
+    return result.assignment;
   }
 
   /**
