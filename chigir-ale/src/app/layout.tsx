@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthNav } from "@/components/ui/auth-nav";
+import { OfflineBanner } from "@/features/mobile/components/offline-banner";
 
 export const metadata: Metadata = {
   title: "Chigir Ale | Civic Infrastructure Platform",
@@ -15,6 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased selection:bg-emerald-500/20">
+        <OfflineBanner />
         <header className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
           <div className="font-bold">Chigir Ale</div>
           <AuthNav />

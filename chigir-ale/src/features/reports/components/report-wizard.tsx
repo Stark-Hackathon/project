@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useState, useTransition, useEffect } from "react";
 import Link from "next/link";
 import { Stepper, type Step } from "@/components/ui/stepper";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,9 @@ import { LocationPicker } from "./location-picker";
 import { DescriptionInput } from "./description-input";
 import { SeveritySelector } from "./severity-selector";
 import { VoiceRecorderAssistant } from "@/features/ai/components/voice-recorder-assistant";
+import { PlatformService } from "@/features/mobile/services/platform.service";
+import { OfflineStorageService } from "@/features/mobile/services/offline-storage.service";
+import { OfflineDraftBanner } from "@/features/mobile/components/offline-draft-banner";
 import { createReportAction, type CreateReportFormData } from "@/features/reports/actions";
 
 interface ReportWizardProps {
@@ -37,6 +40,7 @@ export function ReportWizard({ categories, defaultCategoryId }: ReportWizardProp
     reportId: string;
     publicReference: string;
   } | null>(null);
+  const [offlineQueuedId, setOfflineQueuedId] = useState<string | null>(null);
 
   // Form state
   const [formData, setFormData] = useState<CreateReportFormData>({
@@ -51,6 +55,17 @@ export function ReportWizard({ categories, defaultCategoryId }: ReportWizardProp
     administrativeArea: "",
     mediaUrls: [],
   });
+
+  // Autosave draft locally (Spec §44: Preserve an unfinished report draft)
+  useEffect(() => {
+    if (formData.title || formData.description || formData.categoryId) {
+      void OfflineStorageService.saveDraft({
+        lastUpdated: Date.now(),
+        step: currentStep,
+        formData,
+      });
+    }
+  }, [formData, currentStep]);
 
   const [fieldErrors, setFieldErrors] = useState<{
     title?: string;
@@ -114,10 +129,37 @@ export function ReportWizard({ categories, defaultCategoryId }: ReportWizardProp
     setSubmissionError(null);
 
     startTransition(async () => {
+      // Check network status (Spec §44)
+      const net = await PlatformService.getNetworkStatus();
+      if (!net.connected) {
+        const queued = await OfflineStorageService.enqueueReport(
+          {
+            categoryId: formData.categoryId,
+            title: formData.title,
+            description: formData.description,
+            severity: formData.severity,
+            latitude: formData.latitude,
+            longitude: formData.longitude,
+            locationAccuracy: formData.locationAccuracy,
+            formattedAddress: formData.formattedAddress,
+            administrativeArea: formData.administrativeArea,
+          },
+          (formData.mediaUrls || []).map((url, i) => ({
+            localUri: url,
+            fileName: `evidence_${i}.jpg`,
+            mimeType: "image/jpeg",
+          }))
+        );
+        await OfflineStorageService.clearDraft();
+        setOfflineQueuedId(queued.id);
+        return;
+      }
+
       const res = await createReportAction(formData);
       if (!res.success) {
         setSubmissionError(res.error.message);
       } else {
+        await OfflineStorageService.clearDraft();
         setSubmittedReport(res.data);
       }
     });
@@ -176,10 +218,55 @@ export function ReportWizard({ categories, defaultCategoryId }: ReportWizardProp
     );
   }
 
+  // OFFLINE QUEUED SCREEN (Spec §44: Saved locally, never marked submitted without server confirmation)
+  if (offlineQueuedId) {
+    return (
+      <Card className="max-w-2xl mx-auto shadow-md border-amber-200 dark:border-amber-950">
+        <CardContent className="pt-8 pb-8 text-center space-y-6">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-300">
+            <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-bold text-slate-900 dark:text-white">
+              Report Saved to Device (Offline Mode)
+            </h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">
+              You are currently without internet connection. Your report and evidence have been securely queued on your device and will automatically sync to city authorities once reconnected.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-dashed border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 p-4 text-xs text-amber-800 dark:text-amber-300">
+            Queue ID: <span className="font-mono font-bold">{offlineQueuedId}</span> • Status: Pending Sync
+          </div>
+
+          <div className="pt-4 flex justify-center gap-3">
+            <Link
+              href="/"
+              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold rounded-xl text-sm transition-colors"
+            >
+              Return Home
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const selectedCat = findCategory(formData.categoryId);
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* Offline Draft Recovery (Spec §44) */}
+      <OfflineDraftBanner
+        onRestore={(draft) => {
+          setFormData((prev) => ({ ...prev, ...draft.formData }));
+          setCurrentStep(draft.step);
+        }}
+      />
+
       {/* Progress Stepper */}
       <Stepper
         steps={WIZARD_STEPS}

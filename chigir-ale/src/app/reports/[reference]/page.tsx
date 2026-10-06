@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge, SeverityBadge } from "@/components/ui/badge";
 import { CommunityInteractions } from "@/features/community/components/community-interactions";
 import { getCommunityInteractionState } from "@/features/community/actions";
+import { OfflineReportCacher } from "@/features/mobile/components/offline-report-cacher";
 
 interface ReportDetailPageProps {
   params: Promise<{
@@ -51,6 +52,18 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
 
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 py-10 px-4 sm:px-6">
+      <OfflineReportCacher
+        report={{
+          id: report.id,
+          publicReference: report.publicReference,
+          title: report.title,
+          description: report.description,
+          status: report.status,
+          severity: report.severity,
+          formattedAddress: report.formattedAddress || undefined,
+          categoryName: report.category.name,
+        }}
+      />
       <div className="max-w-3xl mx-auto space-y-6">
         {/* Navigation back */}
         <div className="flex items-center justify-between">
