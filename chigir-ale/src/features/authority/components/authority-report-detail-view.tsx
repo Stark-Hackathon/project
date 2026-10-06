@@ -21,6 +21,7 @@ import {
   assignReportAction,
   recalculatePriorityAction,
 } from "@/features/authority/actions";
+import { ReportModerationModal } from "@/features/moderation/components/report-moderation-modal";
 
 interface ReportDetailProps {
   report: {
@@ -459,6 +460,13 @@ export function AuthorityReportDetailView({
                 Reopen
               </button>
             )}
+
+            {/* Moderation Tooling (Spec §122) */}
+            <ReportModerationModal
+              reportId={report.id}
+              publicReference={report.publicReference}
+              currentCategoryId={report.category.id}
+            />
           </div>
         </div>
       </div>

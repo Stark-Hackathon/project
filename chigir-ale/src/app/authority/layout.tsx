@@ -11,6 +11,7 @@ import {
   LogOut,
   Building2,
   Bell,
+  BarChart3,
 } from "lucide-react";
 import { signOutAction } from "@/features/auth/actions";
 import { prisma } from "@/lib/db/prisma";
@@ -88,6 +89,14 @@ export default async function AuthorityLayout({
           >
             <MapPin className="w-4 h-4 text-amber-400" />
             Live Map &amp; Incidents
+          </Link>
+
+          <Link
+            href="/authority/analytics"
+            className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+          >
+            <BarChart3 className="w-4 h-4 text-purple-400" />
+            Operational Analytics
           </Link>
 
           <Link

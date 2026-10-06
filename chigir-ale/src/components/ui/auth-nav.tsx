@@ -22,6 +22,18 @@ export async function AuthNav() {
           City Map
         </Link>
         <Link
+          href="/transparency"
+          className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+        >
+          Transparency
+        </Link>
+        <Link
+          href="/search"
+          className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+        >
+          Search
+        </Link>
+        <Link
           href="/auth/sign-in"
           className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
         >
@@ -49,13 +61,25 @@ export async function AuthNav() {
         href="/citizen/nearby"
         className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
       >
-        Nearby Issues
+        Nearby
       </Link>
       <Link
         href="/map"
         className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
       >
         City Map
+      </Link>
+      <Link
+        href="/transparency"
+        className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
+      >
+        Transparency
+      </Link>
+      <Link
+        href="/search"
+        className="text-sm text-gray-600 dark:text-gray-400 hover:text-emerald-600"
+      >
+        Search
       </Link>
       <Link
         href="/citizen/reports"
