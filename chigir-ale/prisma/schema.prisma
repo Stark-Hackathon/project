@@ -792,3 +792,62 @@ model DuplicateCandidate {
   @@index([status])
   @@map("duplicate_candidates")
 }
+
+// ============================================================
+// RELIABILITY: TRANSACTIONAL OUTBOX
+// Spec section 155
+// ============================================================
+
+model OutboxEvent {
+  id            String    @id @default(uuid())
+  type          String
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id")
+  payload       Json      @default("{}")
+  processedAt   DateTime? @map("processed_at")
+  attempts      Int       @default(0)
+  lastError     String?   @map("last_error") @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([processedAt])
+  @@index([type])
+  @@map("outbox_events")
+}
+
+// ============================================================
+// RELIABILITY: IDEMPOTENCY
+// Spec section 101
+// ============================================================
+
+model IdempotencyKey {
+  id         String    @id @default(uuid())
+  key        String    @unique
+  scope      String
+  userId     String?   @map("user_id")
+  response   Json?
+  statusCode Int?      @map("status_code")
+  lockedAt   DateTime  @default(now()) @map("locked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  expiresAt  DateTime  @map("expires_at")
+
+  @@index([key, scope])
+  @@map("idempotency_keys")
+}
+
+// ============================================================
+// INTEGRATIONS: WEBHOOK SUBSCRIPTIONS
+// Spec section 102
+// ============================================================
+
+model WebhookSubscription {
+  id             String   @id @default(uuid())
+  organizationId String?  @map("organization_id")
+  url            String
+  secret         String
+  eventTypes     String[] @map("event_types")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("webhook_subscriptions")
+}

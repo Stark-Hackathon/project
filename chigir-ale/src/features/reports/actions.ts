@@ -27,12 +27,15 @@ export const createReportSchema = z.object({
   formattedAddress: z.string().max(250).optional(),
   administrativeArea: z.string().max(100).optional(),
   mediaUrls: z.array(z.string()).max(5).optional(),
+  idempotencyKey: z.string().max(128).optional(),
 });
 
 export type CreateReportFormData = z.infer<typeof createReportSchema>;
 
 import { RateLimitService } from "@/server/services/rate-limit.service";
 import { SanitizerService } from "@/server/services/sanitizer.service";
+import { IdempotencyService } from "@/server/services/idempotency.service";
+import { OutboxService } from "@/server/services/outbox.service";
 
 export async function createReportAction(
   rawData: CreateReportFormData
@@ -64,6 +67,16 @@ export async function createReportAction(
   const cleanTitle = SanitizerService.sanitizeText(data.title);
   const cleanDescription = SanitizerService.sanitizeText(data.description);
 
+  // Idempotency check per Spec Section 101
+  const idempKey = data.idempotencyKey || `${user.id}_${cleanTitle.slice(0, 30)}_${data.categoryId}`;
+  const idempCheck = await IdempotencyService.acquire(idempKey, "REPORT_CREATION", user.id);
+  if (idempCheck.status === "COMPLETED" && idempCheck.response) {
+    return ok(idempCheck.response as { reportId: string; publicReference: string });
+  }
+  if (idempCheck.status === "PENDING") {
+    return err(new Error("A report submission with identical parameters is already processing."));
+  }
+
   try {
     const report = await ReportRepository.create(
       {
@@ -93,6 +106,27 @@ export async function createReportAction(
       });
     }
 
+    const resultData = {
+      reportId: report.id,
+      publicReference: report.publicReference,
+    };
+
+    // Save Idempotency response for future replays (Spec §101)
+    await IdempotencyService.saveResponse(idempKey, "REPORT_CREATION", resultData);
+
+    // Record Transactional Outbox Event (Spec §155 & §156)
+    await OutboxService.recordEvent({
+      type: "report.created",
+      aggregateType: "Report",
+      aggregateId: report.id,
+      payload: {
+        publicReference: report.publicReference,
+        categoryId: report.categoryId,
+        severity: report.severity,
+        reporterId: user.id,
+      },
+    });
+
     // Notify citizen reporter of report creation (Iteration 7)
     void NotificationService.notifyReportLifecycleEvent({
       type: "REPORT_SUBMITTED",
@@ -107,11 +141,9 @@ export async function createReportAction(
     // Dispatch background AI triage jobs decoupled from main flow (Iteration 9, Spec §36, §139)
     void AIJobService.dispatchReportAIJobs(report.id).catch(() => {});
 
-    return ok({
-      reportId: report.id,
-      publicReference: report.publicReference,
-    });
+    return ok(resultData);
   } catch (error) {
+    await IdempotencyService.release(idempKey, "REPORT_CREATION");
     const message = error instanceof Error ? error.message : "Failed to submit report.";
     return err(new Error(message));
   }

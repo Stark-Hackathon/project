@@ -5,6 +5,7 @@
  */
 import { prisma } from "@/lib/db/prisma";
 import type { Category } from "@prisma/client";
+import { CacheService } from "@/server/services/cache.service";
 
 export class CategoryRepository {
   /**
@@ -12,13 +13,20 @@ export class CategoryRepository {
    * Pass null to get root categories, undefined to get all.
    */
   static async listActive(parentId?: string | null): Promise<Category[]> {
-    return prisma.category.findMany({
-      where: {
-        active: true,
-        parentId: parentId === undefined ? undefined : parentId,
+    const cacheKey = `public:global:categories_active:${parentId ?? "all"}`;
+    return CacheService.getOrSet(
+      cacheKey,
+      async () => {
+        return prisma.category.findMany({
+          where: {
+            active: true,
+            parentId: parentId === undefined ? undefined : parentId,
+          },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        });
       },
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    });
+      600
+    );
   }
 
   /**
@@ -42,15 +50,21 @@ export class CategoryRepository {
    * Used by the citizen reporting step 1 (category selection).
    */
   static async listWithChildren(): Promise<(Category & { children: Category[] })[]> {
-    return prisma.category.findMany({
-      where: { active: true, parentId: null },
-      include: {
-        children: {
-          where: { active: true },
+    return CacheService.getOrSet(
+      "public:global:categories_with_children",
+      async () => {
+        return prisma.category.findMany({
+          where: { active: true, parentId: null },
+          include: {
+            children: {
+              where: { active: true },
+              orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+            },
+          },
           orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-        },
+        });
       },
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    });
+      600
+    );
   }
 }
