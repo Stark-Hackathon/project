@@ -1,10 +1,20 @@
 /**
  * Chigir Ale - Database Seed Script
- * Spec: Sections 11 (Categories), 32 (Routing), 52 (Org), 53 (Departments), 54 (Teams)
- * Seeds the initial category hierarchy, municipality organization, operational
- * departments, maintenance teams, and default routing rules.
+ * Spec: Sections 11 (Categories), 32 (Routing), 52 (Org), 53 (Departments), 54 (Teams), 107 (Seed Data)
+ * Seeds initial category hierarchy, municipality organization, operational departments,
+ * maintenance teams, default routing rules, demo users, example reports, incidents, and notifications.
+ *
+ * NOTE: Contains only synthetic demo data for development and testing. Never real citizen data.
  */
-import { PrismaClient, OrganizationType } from "@prisma/client";
+import {
+  PrismaClient,
+  OrganizationType,
+  MembershipRole,
+  ReportStatus,
+  Severity,
+  IncidentRelationshipType,
+} from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
@@ -208,6 +218,188 @@ async function main() {
         });
         console.log(`    ↳ Routing Rule: ${rule.categorySlug} -> ${rule.deptSlug}`);
       }
+    }
+  }
+
+  // 5. Seed Demo Users & Memberships (Spec Section 107)
+  const defaultPasswordHash = await bcrypt.hash("DemoPassword123!", 10);
+  const DEMO_USERS: Array<{
+    name: string;
+    email: string;
+    role: MembershipRole;
+  }> = [
+    { name: "Abebe Bikila", email: "citizen@chigirale.et", role: "CITIZEN" },
+    { name: "Tigist Assefa", email: "staff@chigirale.et", role: "STAFF" },
+    { name: "Dawit Haile", email: "manager@chigirale.et", role: "DEPARTMENT_MANAGER" },
+    { name: "Mulugeta Kebede", email: "admin@chigirale.et", role: "ORG_ADMIN" },
+    { name: "Sara Tadesse", email: "platform@chigirale.et", role: "PLATFORM_ADMIN" },
+  ];
+
+  const userMap = new Map<string, string>();
+  for (const u of DEMO_USERS) {
+    const user = await prisma.user.upsert({
+      where: { email: u.email },
+      update: { name: u.name, passwordHash: defaultPasswordHash },
+      create: {
+        name: u.name,
+        email: u.email,
+        passwordHash: defaultPasswordHash,
+        preferredLanguage: "am",
+      },
+    });
+    userMap.set(u.email, user.id);
+
+    await prisma.membership.upsert({
+      where: {
+        userId_organizationId: {
+          userId: user.id,
+          organizationId: municipality.id,
+        },
+      },
+      update: { role: u.role },
+      create: {
+        userId: user.id,
+        organizationId: municipality.id,
+        role: u.role,
+      },
+    });
+    console.log(`  ✓ Demo User: ${u.name} (${u.role})`);
+  }
+
+  const citizenId = userMap.get("citizen@chigirale.et");
+  const roadsCatId = categoryMap.get("roads");
+  const streetlightsCatId = categoryMap.get("streetlights");
+  const drainageCatId = categoryMap.get("drainage");
+
+  // 6. Seed Example Reports & Incidents (Spec Section 107)
+  if (citizenId && roadsCatId && streetlightsCatId && drainageCatId) {
+    const existingRep1 = await prisma.report.findUnique({
+      where: { publicReference: "CHI-2026-000001" },
+    });
+    let report1 = existingRep1;
+    if (!existingRep1) {
+      report1 = await prisma.report.create({
+        data: {
+          publicReference: "CHI-2026-000001",
+          reporterId: citizenId,
+          organizationId: municipality.id,
+          categoryId: roadsCatId,
+          title: "Major pothole damaging vehicles near Bole Medhanialem",
+          description: "Severe road surface collapse on Cameroon Street near the cathedral.",
+          severity: Severity.HIGH,
+          status: ReportStatus.VERIFIED,
+          latitude: 8.9984,
+          longitude: 38.7865,
+          formattedAddress: "Near Bole Medhanialem, Bole Sub-City, Addis Ababa",
+          administrativeArea: "Bole Sub-City",
+          priorityScore: 78.5,
+        },
+      });
+      console.log(`  ✓ Example Report: ${report1.publicReference} (VERIFIED)`);
+    }
+
+    const existingRep2 = await prisma.report.findUnique({
+      where: { publicReference: "CHI-2026-000002" },
+    });
+    if (!existingRep2) {
+      await prisma.report.create({
+        data: {
+          publicReference: "CHI-2026-000002",
+          reporterId: citizenId,
+          organizationId: municipality.id,
+          categoryId: streetlightsCatId,
+          title: "Streetlight fixture non-functional on Cameroon Street",
+          description: "Three consecutive street lights have been dark for 4 nights.",
+          severity: Severity.MEDIUM,
+          status: ReportStatus.IN_PROGRESS,
+          latitude: 8.9992,
+          longitude: 38.7871,
+          formattedAddress: "Cameroon Street, Bole Sub-City, Addis Ababa",
+          administrativeArea: "Bole Sub-City",
+          priorityScore: 45.0,
+        },
+      });
+      console.log(`  ✓ Example Report: CHI-2026-000002 (IN_PROGRESS)`);
+    }
+
+    const existingRep3 = await prisma.report.findUnique({
+      where: { publicReference: "CHI-2026-000003" },
+    });
+    let report3 = existingRep3;
+    if (!existingRep3) {
+      report3 = await prisma.report.create({
+        data: {
+          publicReference: "CHI-2026-000003",
+          reporterId: citizenId,
+          organizationId: municipality.id,
+          categoryId: drainageCatId,
+          title: "Severe stormwater drain blockage causing road flooding",
+          description: "Debris blocking primary culvert causing overflow across both lanes.",
+          severity: Severity.CRITICAL,
+          status: ReportStatus.RESOLVED,
+          latitude: 8.9975,
+          longitude: 38.7852,
+          formattedAddress: "Bole Medhanialem Junction, Bole Sub-City, Addis Ababa",
+          administrativeArea: "Bole Sub-City",
+          priorityScore: 92.0,
+        },
+      });
+      console.log(`  ✓ Example Report: ${report3.publicReference} (RESOLVED)`);
+    }
+
+    // Example Incident
+    const existingIncident = await prisma.incident.findFirst({
+      where: { title: "Bole Cameroon Corridor Roadway & Drainage Works" },
+    });
+    if (!existingIncident && report1 && report3) {
+      const incident = await prisma.incident.create({
+        data: {
+          organizationId: municipality.id,
+          categoryId: roadsCatId,
+          title: "Bole Cameroon Corridor Roadway & Drainage Works",
+          description: "Coordinated municipal works covering roadway asphalt and drainage culvert.",
+          status: ReportStatus.IN_PROGRESS,
+          severity: Severity.HIGH,
+          latitude: 8.9984,
+          longitude: 38.7865,
+          formattedAddress: "Cameroon Street Corridor, Bole Sub-City, Addis Ababa",
+          reportCount: 2,
+        },
+      });
+
+      await prisma.incidentReport.createMany({
+        data: [
+          { incidentId: incident.id, reportId: report1.id, relationshipType: IncidentRelationshipType.PRIMARY },
+          { incidentId: incident.id, reportId: report3.id, relationshipType: IncidentRelationshipType.RELATED },
+        ],
+      });
+      console.log(`  ✓ Example Incident: ${incident.title}`);
+    }
+
+    // Example Notifications
+    const existingNotif = await prisma.notification.findFirst({
+      where: { userId: citizenId },
+    });
+    if (!existingNotif) {
+      await prisma.notification.createMany({
+        data: [
+          {
+            userId: citizenId,
+            type: "REPORT_VERIFIED",
+            title: "Report #CHI-2026-000001 Verified",
+            body: "Authorities have verified your report and scheduled work crews.",
+            data: { publicReference: "CHI-2026-000001" },
+          },
+          {
+            userId: citizenId,
+            type: "REPORT_RESOLVED",
+            title: "Report #CHI-2026-000003 Resolved",
+            body: "Drainage blockage cleared by field crew. Please confirm if fixed.",
+            data: { publicReference: "CHI-2026-000003" },
+          },
+        ],
+      });
+      console.log(`  ✓ Example Notifications seeded for demo citizen`);
     }
   }
 
