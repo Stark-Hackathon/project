@@ -12,6 +12,7 @@ import { EvidenceUploader } from "./evidence-uploader";
 import { LocationPicker } from "./location-picker";
 import { DescriptionInput } from "./description-input";
 import { SeveritySelector } from "./severity-selector";
+import { VoiceRecorderAssistant } from "@/features/ai/components/voice-recorder-assistant";
 import { createReportAction, type CreateReportFormData } from "@/features/reports/actions";
 
 interface ReportWizardProps {
@@ -238,17 +239,43 @@ export function ReportWizard({ categories, defaultCategoryId }: ReportWizardProp
 
           {/* STEP 4: Description */}
           {currentStep === 3 && (
-            <DescriptionInput
-              title={formData.title}
-              description={formData.description}
-              onTitleChange={(title) =>
-                setFormData((prev) => ({ ...prev, title }))
-              }
-              onDescriptionChange={(desc) =>
-                setFormData((prev) => ({ ...prev, description: desc }))
-              }
-              errors={fieldErrors}
-            />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-xs text-slate-500 font-medium">
+                  Provide issue details or describe using voice:
+                </span>
+                <VoiceRecorderAssistant
+                  onTranscriptionComplete={({ title, description, suggestedCategorySlug }) => {
+                    setFormData((prev) => {
+                      const updated = { ...prev, title, description };
+                      if (suggestedCategorySlug) {
+                        for (const p of categories) {
+                          if (p.slug === suggestedCategorySlug) updated.categoryId = p.id;
+                          if (p.children) {
+                            for (const c of p.children) {
+                              if (c.slug === suggestedCategorySlug) updated.categoryId = c.id;
+                            }
+                          }
+                        }
+                      }
+                      return updated;
+                    });
+                  }}
+                />
+              </div>
+
+              <DescriptionInput
+                title={formData.title}
+                description={formData.description}
+                onTitleChange={(title) =>
+                  setFormData((prev) => ({ ...prev, title }))
+                }
+                onDescriptionChange={(desc) =>
+                  setFormData((prev) => ({ ...prev, description: desc }))
+                }
+                errors={fieldErrors}
+              />
+            </div>
           )}
 
           {/* STEP 5: Severity */}

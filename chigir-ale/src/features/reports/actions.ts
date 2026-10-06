@@ -10,6 +10,7 @@ import { ReportRepository } from "@/server/repositories/report.repository";
 import { CategoryRepository } from "@/server/repositories/category.repository";
 import { prisma } from "@/lib/db/prisma";
 import { NotificationService } from "@/server/services/notifications";
+import { AIJobService } from "@/server/services/ai/ai-job.service";
 import { ok, err, type Result } from "@/types/domain";
 
 export const createReportSchema = z.object({
@@ -85,6 +86,9 @@ export async function createReportAction(
       recipientEmail: user.email,
       recipientName: user.name,
     }).catch(() => {});
+
+    // Dispatch background AI triage jobs decoupled from main flow (Iteration 9, Spec §36, §139)
+    void AIJobService.dispatchReportAIJobs(report.id).catch(() => {});
 
     return ok({
       reportId: report.id,

@@ -22,6 +22,8 @@ import {
   recalculatePriorityAction,
 } from "@/features/authority/actions";
 import { ReportModerationModal } from "@/features/moderation/components/report-moderation-modal";
+import { SmartRecommendationsCard } from "@/features/ai/components/smart-recommendations-card";
+import type { SmartRecommendation } from "@/server/services/ai/types";
 
 interface ReportDetailProps {
   report: {
@@ -129,6 +131,15 @@ interface ReportDetailProps {
     role: string;
   }>;
   currentOrganizationId: string;
+  categories?: Array<{ id: string; name: string }>;
+  aiRecommendation?: SmartRecommendation | null;
+  aiJobs?: Array<{
+    id: string;
+    type: string;
+    status: string;
+    attempts: number;
+    error?: string | null;
+  }>;
 }
 
 export function AuthorityReportDetailView({
@@ -136,6 +147,9 @@ export function AuthorityReportDetailView({
   departments,
   staff,
   currentOrganizationId,
+  categories = [],
+  aiRecommendation,
+  aiJobs = [],
 }: ReportDetailProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -689,6 +703,17 @@ export function AuthorityReportDetailView({
 
         {/* Right 1 Col: Priority Engine & SLA Target Card */}
         <div className="space-y-8">
+          {/* Smart Decision Support Card (Spec §35, §136, §137) */}
+          <SmartRecommendationsCard
+            reportId={report.id}
+            currentCategory={{ id: report.category.id, name: report.category.name }}
+            currentSeverity={report.severity}
+            initialRecommendation={aiRecommendation}
+            jobs={aiJobs}
+            availableCategories={categories}
+            onUpdate={() => router.refresh()}
+          />
+
           {/* Priority Decision-Support Card (Spec Section 34) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
