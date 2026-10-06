@@ -195,6 +195,4 @@ Rather than requiring residents to know which organization to contact or how to 
 
 ---
 
-**Project:** Community Watch  
-**Category:** Civic Technology / Community Infrastructure  
-**Core Concept:** Anonymous hyperlocal reporting + map-based issue clustering + voice-enabled reporting
+

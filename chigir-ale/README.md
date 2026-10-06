@@ -50,6 +50,8 @@ chigir-ale/
 
 ---
 
+## Getting Started
+
 ### Setup
 
 ```bash
