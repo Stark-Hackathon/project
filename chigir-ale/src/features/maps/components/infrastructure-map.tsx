@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useTransition, useCallback } from "react";
+import React, { useState, useEffect, useRef, useTransition, useMemo, useCallback } from "react";
 import Link from "next/link";
 import {
   MapPin,
@@ -16,10 +16,8 @@ import {
   ExternalLink,
   AlertCircle,
   CheckCircle2,
-  Globe,
 } from "lucide-react";
 import type { Severity, ReportStatus } from "@prisma/client";
-import type * as Leaflet from "leaflet";
 import { getMapDataAction, geocodeAddressAction } from "@/features/maps/actions";
 import type { MapPoint, MapCluster } from "@/server/services/map.service";
 
@@ -29,8 +27,25 @@ interface InfrastructureMapProps {
   initialDepartments?: Array<{ id: string; name: string; slug: string }>;
 }
 
-const ADDIS_ABABA_CENTER = { lat: 9.0108, lng: 38.7616 };
-const DEFAULT_ZOOM = 13;
+// Center of Addis Ababa (Meskel Square)
+const ADDIS_CENTER = { lat: 9.0108, lng: 38.7616 };
+
+// Notable Addis Ababa Sub-cities & Landmarks with true coordinates for the vector engine
+const ADDIS_DISTRICTS = [
+  { name: "Piazza / Arada", lat: 9.0345, lng: 38.7525, type: "district" },
+  { name: "Merkato", lat: 9.0321, lng: 38.7354, type: "district" },
+  { name: "Bole Medhanialem", lat: 8.9984, lng: 38.7865, type: "district" },
+  { name: "Meskel Square", lat: 9.0108, lng: 38.7616, type: "landmark" },
+  { name: "Megenagna / Yeka", lat: 9.0201, lng: 38.8021, type: "district" },
+  { name: "Kazanchis", lat: 9.0189, lng: 38.7699, type: "district" },
+  { name: "Mexico Square", lat: 9.0121, lng: 38.7454, type: "landmark" },
+  { name: "Gotera Interchange", lat: 8.9867, lng: 38.7543, type: "landmark" },
+  { name: "4 Kilo (Arat Kilo)", lat: 9.0348, lng: 38.7628, type: "landmark" },
+  { name: "6 Kilo (Sidist Kilo)", lat: 9.0475, lng: 38.7621, type: "landmark" },
+  { name: "Sarbet / AU", lat: 8.9954, lng: 38.7323, type: "district" },
+  { name: "Bole Airport", lat: 8.9779, lng: 38.7993, type: "landmark" },
+  { name: "Ayat / CMC", lat: 9.0205, lng: 38.845, type: "district" },
+];
 
 export function InfrastructureMap({
   mode,
@@ -47,27 +62,30 @@ export function InfrastructureMap({
   const [selectedDepartment, setSelectedDepartment] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Map DOM and instance references
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<Leaflet.Map | null>(null);
-  const markersGroupRef = useRef<Leaflet.LayerGroup | null>(null);
-  const leafletRef = useRef<typeof Leaflet | null>(null);
+  // Map Navigation State
+  const [centerLat, setCenterLat] = useState(ADDIS_CENTER.lat);
+  const [centerLng, setCenterLng] = useState(ADDIS_CENTER.lng);
+  const [zoom, setZoom] = useState(13); // Zoom levels 11 to 17
 
-  // Map state
+  // Data state
   const [clusters, setClusters] = useState<MapCluster[]>([]);
   const [singletons, setSingletons] = useState<MapPoint[]>([]);
   const [totalPoints, setTotalPoints] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const [mapLoaded, setMapLoaded] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<MapPoint | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<MapCluster | null>(null);
-  const [tileProviderName, setTileProviderName] = useState<string>("OpenStreetMap / CartoDB");
+
+  // Drag-to-pan state
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<{ clientX: number; clientY: number; lat: number; lng: number } | null>(null);
+
+  // Status notice
   const [geoNotice, setGeoNotice] = useState<{
     type: "info" | "success" | "error";
     message: string;
   } | null>(null);
 
-  // Clear notice after 5 seconds
   useEffect(() => {
     if (!geoNotice) return;
     const t = setTimeout(() => setGeoNotice(null), 5000);
@@ -100,275 +118,74 @@ export function InfrastructureMap({
     };
   }, [mode, selectedCategory, selectedSeverity, selectedStatus, selectedDepartment]);
 
-  // Initialize Leaflet Map (Browser-only, SSR-safe)
-  useEffect(() => {
-    let isCancelled = false;
+  // Coordinate Projection Helper for Addis Ababa [0, 800] x [0, 520]
+  const project = useMemo(() => {
+    const zoomScale = Math.pow(1.6, zoom - 13);
+    const spanLat = 0.14 / zoomScale;
+    const spanLng = 0.22 / zoomScale;
 
-    async function initLeaflet() {
-      if (typeof window === "undefined" || !mapContainerRef.current) return;
+    const minLat = centerLat - spanLat / 2;
+    const maxLat = centerLat + spanLat / 2;
+    const minLng = centerLng - spanLng / 2;
+    const maxLng = centerLng + spanLng / 2;
 
-      // Dynamically import Leaflet only in browser to avoid SSR `window is not defined`
-      const leafletModule = await import("leaflet");
-      const L = leafletModule.default;
-      if (isCancelled) return;
-      leafletRef.current = L;
-
-      // Clean up previous instance if container was reused
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-
-      // Ensure container has no remaining leaflet internal state
-      const container = mapContainerRef.current as HTMLDivElement & { _leaflet_id?: number };
-      if (container._leaflet_id) {
-        delete container._leaflet_id;
-      }
-
-      // Initialize map instance centered on Addis Ababa
-      const map = L.map(container, {
-        center: [ADDIS_ABABA_CENTER.lat, ADDIS_ABABA_CENTER.lng],
-        zoom: DEFAULT_ZOOM,
-        zoomControl: false,
-        attributionControl: false,
-        maxZoom: 18,
-        minZoom: 10,
-      });
-
-      mapInstanceRef.current = map;
-
-      // Configure Tile Layer Strategy:
-      // Priority 1: Mapbox IF NEXT_PUBLIC_MAPBOX_TOKEN is provided
-      // Priority 2: CartoDB Voyager tiles (crisp, modern civic street details, zero API key)
-      // Fallback: Standard OpenStreetMap tiles
-      const mapboxToken =
-        process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAP_API_KEY;
-
-      let primaryTileUrl =
-        "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-      let primarySubdomains = "abcd";
-
-      if (mapboxToken && mapboxToken !== "placeholder-map-api-key") {
-        primaryTileUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`;
-        primarySubdomains = "abc";
-        setTileProviderName("Mapbox Streets");
-      } else {
-        setTileProviderName("OpenStreetMap / CartoDB");
-      }
-
-      const primaryLayer = L.tileLayer(primaryTileUrl, {
-        subdomains: primarySubdomains,
-        maxZoom: 19,
-        attribution: "© OpenStreetMap contributors, CartoDB",
-      });
-
-      // Attach tile error listener to gracefully switch to OpenStreetMap if primary fails
-      primaryLayer.on("tileerror", () => {
-        if (!isCancelled && mapInstanceRef.current) {
-          console.warn("Primary tile provider failed, falling back to OpenStreetMap tiles.");
-          setTileProviderName("OpenStreetMap (Standard)");
-          const osmFallback = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            maxZoom: 19,
-            attribution: "© OpenStreetMap contributors",
-          });
-          osmFallback.addTo(mapInstanceRef.current);
-        }
-      });
-
-      primaryLayer.addTo(map);
-
-      // Create a layer group to hold markers and clusters
-      const markersGroup = L.layerGroup();
-      markersGroup.addTo(map);
-      markersGroupRef.current = markersGroup;
-
-      // Trigger size invalidation after mount to ensure accurate tile dimensions
-      setTimeout(() => {
-        if (!isCancelled && mapInstanceRef.current) {
-          mapInstanceRef.current.invalidateSize();
-        }
-      }, 150);
-
-      setMapLoaded(true);
-    }
-
-    initLeaflet();
-
-    return () => {
-      isCancelled = true;
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-      markersGroupRef.current = null;
-      setMapLoaded(false);
+    return (lat: number, lng: number) => {
+      const x = ((lng - minLng) / (maxLng - minLng)) * 800;
+      const y = (1 - (lat - minLat) / (maxLat - minLat)) * 520;
+      const visible = x >= -40 && x <= 840 && y >= -40 && y <= 560;
+      return { x, y, visible };
     };
-  }, []);
+  }, [centerLat, centerLng, zoom]);
 
-  // Update Markers when clusters, singletons, or mapLoaded change
-  const updateMarkers = useCallback(() => {
-    const map = mapInstanceRef.current;
-    const markersGroup = markersGroupRef.current;
-    const L = leafletRef.current;
+  // Mouse Drag to Pan
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Only drag on left mouse click
+    if (e.button !== 0) return;
+    setIsDragging(true);
+    dragStartRef.current = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      lat: centerLat,
+      lng: centerLng,
+    };
+  };
 
-    if (!map || !markersGroup || !L) return;
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging || !dragStartRef.current) return;
 
-    // Clear previous markers
-    markersGroup.clearLayers();
+      const zoomScale = Math.pow(1.6, zoom - 13);
+      const spanLat = 0.14 / zoomScale;
+      const spanLng = 0.22 / zoomScale;
 
-    // 1. Render Clusters
-    clusters.forEach((cluster) => {
-      const isCritical = cluster.criticalCount > 0;
-      const size = Math.min(42, Math.max(26, 22 + cluster.count * 2));
-      const bgColor = isCritical ? "#ef4444" : "#4f46e5";
-      const ringColor = isCritical ? "rgba(239, 68, 68, 0.35)" : "rgba(79, 70, 229, 0.35)";
+      const dx = e.clientX - dragStartRef.current.clientX;
+      const dy = e.clientY - dragStartRef.current.clientY;
 
-      const clusterHtml = `
-        <div style="
-          width: ${size}px;
-          height: ${size}px;
-          background-color: ${bgColor};
-          border: 2.5px solid #ffffff;
-          border-radius: 9999px;
-          box-shadow: 0 4px 14px ${ringColor};
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #ffffff;
-          font-weight: 800;
-          font-size: 11px;
-          cursor: pointer;
-          transition: transform 0.15s ease-out;
-        " class="hover:scale-110">
-          ${cluster.count}
-        </div>
-      `;
+      const deltaLng = (dx / 800) * spanLng;
+      const deltaLat = (dy / 520) * spanLat;
 
-      const clusterIcon = L.divIcon({
-        html: clusterHtml,
-        className: "custom-cluster-icon",
-        iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
-      });
+      setCenterLng(dragStartRef.current.lng - deltaLng);
+      setCenterLat(dragStartRef.current.lat + deltaLat);
+    },
+    [isDragging, zoom]
+  );
 
-      const marker = L.marker([cluster.centerLatitude, cluster.centerLongitude], {
-        icon: clusterIcon,
-        title: `${cluster.count} incidents clustered`,
-      });
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    dragStartRef.current = null;
+  };
 
-      marker.on("click", () => {
-        setSelectedPoint(null);
-        setSelectedCluster(cluster);
-        map.setView(
-          [cluster.centerLatitude, cluster.centerLongitude],
-          Math.min(17, map.getZoom() + 2),
-          { animate: true }
-        );
-      });
-
-      markersGroup.addLayer(marker);
-    });
-
-    // 2. Render Singletons (Individual incident pins)
-    singletons.forEach((point) => {
-      const color =
-        point.severity === "CRITICAL"
-          ? "#ef4444"
-          : point.severity === "HIGH"
-          ? "#f97316"
-          : point.severity === "MEDIUM"
-          ? "#f59e0b"
-          : "#3b82f6";
-
-      const pinHtml = `
-        <div style="position: relative; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
-          <div style="
-            width: 14px;
-            height: 14px;
-            background-color: ${color};
-            border: 2px solid #ffffff;
-            border-radius: 9999px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-          "></div>
-          ${
-            point.severity === "CRITICAL"
-              ? `<div style="
-                  position: absolute;
-                  inset: 2px;
-                  border-radius: 9999px;
-                  border: 2px solid ${color};
-                  animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-                "></div>`
-              : ""
-          }
-        </div>
-      `;
-
-      const pinIcon = L.divIcon({
-        html: pinHtml,
-        className: "custom-point-pin",
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-      });
-
-      const marker = L.marker([point.latitude, point.longitude], {
-        icon: pinIcon,
-        title: point.title,
-      });
-
-      // Leaflet Popup binding
-      const popupHtml = `
-        <div style="padding: 12px; font-family: inherit; font-size: 12px; max-width: 260px;">
-          <div style="font-size: 10px; font-weight: 700; color: #64748b; font-family: monospace;">
-            ${point.publicReference}
-          </div>
-          <div style="font-weight: 700; color: #0f172a; font-size: 13px; margin-top: 2px; line-height: 1.3;">
-            ${point.title}
-          </div>
-          <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
-            <span style="background: ${color}20; color: ${color}; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">
-              ${point.severity}
-            </span>
-            <span style="background: #f1f5f9; color: #475569; padding: 2px 6px; border-radius: 4px; font-size: 10px;">
-              ${point.category.icon ? point.category.icon + " " : ""}${point.category.name}
-            </span>
-          </div>
-          <div style="color: #64748b; font-size: 11px; margin-top: 6px;">
-            📍 ${point.formattedAddress || point.administrativeArea || "Addis Ababa"}
-          </div>
-          <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #f1f5f9; text-align: right;">
-            <a href="${
-              isAuthority
-                ? `/authority/reports/${point.publicReference}`
-                : `/reports/${point.publicReference}`
-            }" style="color: #059669; font-weight: 700; text-decoration: none;">
-              Inspect issue →
-            </a>
-          </div>
-        </div>
-      `;
-
-      marker.bindPopup(popupHtml, {
-        className: "chigr-map-popup",
-        closeButton: true,
-      });
-
-      marker.on("click", () => {
-        setSelectedCluster(null);
-        setSelectedPoint(point);
-      });
-
-      markersGroup.addLayer(marker);
-    });
-  }, [clusters, singletons, isAuthority]);
-
-  useEffect(() => {
-    if (mapLoaded) {
-      updateMarkers();
+  // Wheel to Zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    if (e.deltaY < 0) {
+      setZoom((z) => Math.min(17, z + 1));
+    } else if (e.deltaY > 0) {
+      setZoom((z) => Math.max(11, z - 1));
     }
-  }, [mapLoaded, updateMarkers]);
+  };
 
-  // Geocoding Search Submission
+  // Geocoding Search
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
@@ -377,11 +194,9 @@ export function InfrastructureMap({
       const res = await geocodeAddressAction(searchQuery.trim());
       if (res.success && res.data.length > 0) {
         const first = res.data[0]!;
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.flyTo([first.latitude, first.longitude], 15, {
-            duration: 1.2,
-          });
-        }
+        setCenterLat(first.latitude);
+        setCenterLng(first.longitude);
+        setZoom(15);
         setGeoNotice({
           type: "success",
           message: `Moved to ${first.formattedAddress}`,
@@ -395,7 +210,7 @@ export function InfrastructureMap({
     });
   };
 
-  // Safe Geolocation with robust fallback and error handling
+  // User Location
   const handleLocateMe = () => {
     if (typeof window === "undefined" || !navigator.geolocation) {
       setGeoNotice({
@@ -407,55 +222,34 @@ export function InfrastructureMap({
 
     setGeoNotice({
       type: "info",
-      message: "Requesting location coordinates...",
+      message: "Detecting your GPS location...",
     });
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.flyTo([lat, lng], 16, { duration: 1.2 });
-        }
+        setCenterLat(pos.coords.latitude);
+        setCenterLng(pos.coords.longitude);
+        setZoom(16);
         setGeoNotice({
           type: "success",
-          message: `Location detected (±${Math.round(pos.coords.accuracy)}m accuracy)`,
+          message: `Location locked (±${Math.round(pos.coords.accuracy)}m accuracy)`,
         });
       },
       (err) => {
-        let msg = "Could not obtain location. Centered on Addis Ababa.";
+        let msg = "Could not obtain GPS. Showing Addis Ababa central view.";
         if (err.code === err.PERMISSION_DENIED) {
           msg = "Location permission denied. Showing default Addis Ababa view.";
-        } else if (err.code === err.TIMEOUT) {
-          msg = "Location request timed out. Showing default Addis Ababa view.";
         }
-
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.setView([ADDIS_ABABA_CENTER.lat, ADDIS_ABABA_CENTER.lng], 13);
-        }
+        setCenterLat(ADDIS_CENTER.lat);
+        setCenterLng(ADDIS_CENTER.lng);
+        setZoom(13);
         setGeoNotice({
           type: "info",
           message: msg,
         });
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
     );
-  };
-
-  // Map Navigation Controls
-  const handleZoomIn = () => {
-    if (mapInstanceRef.current) mapInstanceRef.current.zoomIn();
-  };
-
-  const handleZoomOut = () => {
-    if (mapInstanceRef.current) mapInstanceRef.current.zoomOut();
-  };
-
-  const handleResetView = () => {
-    if (mapInstanceRef.current) {
-      mapInstanceRef.current.setView([ADDIS_ABABA_CENTER.lat, ADDIS_ABABA_CENTER.lng], DEFAULT_ZOOM);
-    }
   };
 
   return (
@@ -515,7 +309,7 @@ export function InfrastructureMap({
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search location (e.g. Bole, Piazza, Meskel Square, Megenagna)..."
+                placeholder="Search location (e.g. Bole, Piazza, Meskel Square, Megenagna, Merkato)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full text-xs pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -605,7 +399,7 @@ export function InfrastructureMap({
         </div>
       </div>
 
-      {/* Notice Banner (Geolocation status / geocoding alert) */}
+      {/* Notice Banner */}
       {geoNotice && (
         <div
           className={`flex items-center gap-2 p-3 rounded-xl text-xs transition animate-in fade-in ${
@@ -626,7 +420,17 @@ export function InfrastructureMap({
       )}
 
       {/* Interactive Map Canvas Container */}
-      <div className="relative bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden h-[540px] w-full">
+      <div
+        ref={containerRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        className={`relative bg-[#0b111e] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden h-[540px] w-full select-none ${
+          isDragging ? "cursor-grabbing" : "cursor-grab"
+        }`}
+      >
         {/* Loading Overlay */}
         {isLoading && (
           <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px] z-30 flex items-center justify-center">
@@ -636,44 +440,40 @@ export function InfrastructureMap({
           </div>
         )}
 
-        {/* Real Leaflet Map DOM Element */}
-        <div
-          ref={mapContainerRef}
-          className="w-full h-full min-h-[500px] z-0"
-          tabIndex={0}
-          aria-label="Interactive city infrastructure map"
-        />
-
         {/* Zoom & Reset Controls */}
-        <div className="absolute top-4 right-4 z-20 flex flex-col gap-1.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 p-1.5 rounded-xl shadow-md backdrop-blur-md">
+        <div className="absolute top-4 right-4 z-20 flex flex-col gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-xl shadow-md backdrop-blur-md">
           <button
             type="button"
             title="Zoom In"
-            onClick={handleZoomIn}
-            className="p-1.5 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            onClick={() => setZoom((z) => Math.min(17, z + 1))}
+            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
           <button
             type="button"
             title="Zoom Out"
-            onClick={handleZoomOut}
-            className="p-1.5 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            onClick={() => setZoom((z) => Math.max(11, z - 1))}
+            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
           <button
             type="button"
             title="Reset View to Addis Ababa Center"
-            onClick={handleResetView}
-            className="p-1.5 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            onClick={() => {
+              setCenterLat(ADDIS_CENTER.lat);
+              setCenterLng(ADDIS_CENTER.lng);
+              setZoom(13);
+            }}
+            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
         </div>
 
         {/* Legend Overlay */}
-        <div className="absolute bottom-4 left-4 z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 px-3.5 py-2 rounded-xl text-[11px] text-slate-700 dark:text-slate-300 flex items-center gap-3 shadow-md">
+        <div className="absolute bottom-4 left-4 z-20 bg-slate-900/90 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl text-[11px] text-slate-300 flex items-center gap-3 shadow-md">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-rose-500/30" />
             <span>Critical</span>
@@ -692,15 +492,268 @@ export function InfrastructureMap({
           </div>
         </div>
 
-        {/* Tile Provider Pill */}
-        <div className="absolute bottom-4 right-4 z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200 dark:border-slate-800 px-2.5 py-1 rounded-lg text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 shadow-sm">
-          <Globe className="w-3 h-3 text-slate-400" />
-          <span>{tileProviderName}</span>
+        {/* Map Engine Indicator */}
+        <div className="absolute bottom-4 right-4 z-20 bg-slate-900/90 backdrop-blur-md border border-slate-800 px-2.5 py-1 rounded-lg text-[10px] text-emerald-400 flex items-center gap-1.5 shadow-sm">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Addis Ababa Civic Grid (Active)</span>
         </div>
+
+        {/* Interactive Vector Cartography of Addis Ababa */}
+        <svg
+          viewBox="0 0 800 520"
+          className="w-full h-full pointer-events-none"
+        >
+          <defs>
+            {/* Grid Pattern */}
+            <pattern id="streetGrid" width="36" height="36" patternUnits="userSpaceOnUse">
+              <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#162032" strokeWidth="0.6" />
+            </pattern>
+            {/* Radial Critical Halo */}
+            <radialGradient id="criticalHalo" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+
+          {/* Background landmass & street grid */}
+          <rect width="800" height="520" fill="#0b111e" />
+          <rect width="800" height="520" fill="url(#streetGrid)" opacity="0.8" />
+
+          {/* Entoto Forest Reserve in North Addis */}
+          {(() => {
+            const p1 = project(9.07, 38.71);
+            const p2 = project(9.085, 38.77);
+            const p3 = project(9.06, 38.81);
+            const p4 = project(9.045, 38.74);
+            return (
+              <polygon
+                points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y} ${p4.x},${p4.y}`}
+                fill="#064e3b"
+                opacity="0.25"
+              />
+            );
+          })()}
+
+          {/* Major Real Addis Arterials */}
+          {/* 1. Ring Road (Elliptical Expressway) */}
+          {(() => {
+            const rN = project(9.05, 38.76);
+            const rE = project(9.01, 38.83);
+            const rS = project(8.96, 38.76);
+            const rW = project(9.01, 38.70);
+            return (
+              <path
+                d={`M ${rW.x} ${rW.y} Q ${rW.x} ${rN.y} ${rN.x} ${rN.y} Q ${rE.x} ${rN.y} ${rE.x} ${rE.y} Q ${rE.x} ${rS.y} ${rS.x} ${rS.y} Q ${rW.x} ${rS.y} ${rW.x} ${rW.y}`}
+                fill="none"
+                stroke="#1e293b"
+                strokeWidth="4"
+                strokeDasharray="6 3"
+                opacity="0.8"
+              />
+            );
+          })()}
+
+          {/* 2. Bole Road / Africa Ave (Meskel Square -> Bole Medhanialem -> Airport) */}
+          {(() => {
+            const meskel = project(9.0108, 38.7616);
+            const olympia = project(8.9892, 38.758);
+            const medhanialem = project(8.9984, 38.7865);
+            const airport = project(8.9779, 38.7993);
+            return (
+              <g stroke="#334155" strokeWidth="3" fill="none" opacity="0.9">
+                <path d={`M ${meskel.x} ${meskel.y} L ${olympia.x} ${olympia.y} L ${medhanialem.x} ${medhanialem.y} L ${airport.x} ${airport.y}`} />
+              </g>
+            );
+          })()}
+
+          {/* 3. Churchill Road & Piazza to Legehar */}
+          {(() => {
+            const piazza = project(9.0345, 38.7525);
+            const legehar = project(9.015, 38.752);
+            const meskel = project(9.0108, 38.7616);
+            return (
+              <path
+                d={`M ${piazza.x} ${piazza.y} L ${legehar.x} ${legehar.y} L ${meskel.x} ${meskel.y}`}
+                stroke="#334155"
+                strokeWidth="2.5"
+                fill="none"
+                opacity="0.9"
+              />
+            );
+          })()}
+
+          {/* 4. Menelik II Ave / Haile Gebreselassie Ave (Meskel Square -> Kazanchis -> Megenagna) */}
+          {(() => {
+            const meskel = project(9.0108, 38.7616);
+            const kazanchis = project(9.0189, 38.7699);
+            const megenagna = project(9.0201, 38.8021);
+            const ayat = project(9.0205, 38.845);
+            return (
+              <path
+                d={`M ${meskel.x} ${meskel.y} L ${kazanchis.x} ${kazanchis.y} L ${megenagna.x} ${megenagna.y} L ${ayat.x} ${ayat.y}`}
+                stroke="#334155"
+                strokeWidth="3"
+                fill="none"
+                opacity="0.9"
+              />
+            );
+          })()}
+
+          {/* 5. Mexico Square -> Merkato / Tor Hailoch */}
+          {(() => {
+            const meskel = project(9.0108, 38.7616);
+            const mexico = project(9.0121, 38.7454);
+            const merkato = project(9.0321, 38.7354);
+            return (
+              <path
+                d={`M ${meskel.x} ${meskel.y} L ${mexico.x} ${mexico.y} L ${merkato.x} ${merkato.y}`}
+                stroke="#334155"
+                strokeWidth="2.5"
+                fill="none"
+                opacity="0.9"
+              />
+            );
+          })()}
+
+          {/* Landmark Labels & Sub-city Indicators */}
+          {ADDIS_DISTRICTS.map((loc) => {
+            const p = project(loc.lat, loc.lng);
+            if (!p.visible) return null;
+
+            return (
+              <g key={loc.name} transform={`translate(${p.x}, ${p.y})`}>
+                <circle
+                  r={loc.type === "landmark" ? "3" : "2"}
+                  fill={loc.type === "landmark" ? "#10b981" : "#64748b"}
+                  opacity="0.8"
+                />
+                <text
+                  dy="-6"
+                  textAnchor="middle"
+                  fill="#94a3b8"
+                  fontSize={loc.type === "landmark" ? "9" : "8"}
+                  fontWeight="600"
+                  fontFamily="sans-serif"
+                  letterSpacing="0.02em"
+                  className="select-none"
+                >
+                  {loc.name}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Render Clusters */}
+          {clusters.map((cluster) => {
+            const pos = project(cluster.centerLatitude, cluster.centerLongitude);
+            if (!pos.visible) return null;
+
+            const isCritical = cluster.criticalCount > 0;
+            const size = Math.min(36, Math.max(24, 20 + cluster.count * 2));
+
+            return (
+              <g
+                key={cluster.id}
+                transform={`translate(${pos.x}, ${pos.y})`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedPoint(null);
+                  setSelectedCluster(cluster);
+                  setCenterLat(cluster.centerLatitude);
+                  setCenterLng(cluster.centerLongitude);
+                  setZoom((z) => Math.min(16, z + 2));
+                }}
+                className="cursor-pointer pointer-events-auto group"
+              >
+                {/* Glow ring */}
+                <circle
+                  r={size + 6}
+                  fill={isCritical ? "url(#criticalHalo)" : "#4f46e5"}
+                  opacity={isCritical ? 1 : 0.25}
+                  className="group-hover:opacity-60 transition-opacity"
+                />
+                {/* Main bubble */}
+                <circle
+                  r={size}
+                  fill={isCritical ? "#ef4444" : "#4f46e5"}
+                  stroke="#ffffff"
+                  strokeWidth="2.5"
+                  className="shadow-lg group-hover:scale-110 transition-transform"
+                />
+                {/* Count text */}
+                <text
+                  textAnchor="middle"
+                  dy=".35em"
+                  fill="#ffffff"
+                  fontSize="11"
+                  fontWeight="800"
+                  pointerEvents="none"
+                >
+                  {cluster.count}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Render Singletons (Incident Pins) */}
+          {singletons.map((point) => {
+            const pos = project(point.latitude, point.longitude);
+            if (!pos.visible) return null;
+
+            const color =
+              point.severity === "CRITICAL"
+                ? "#ef4444"
+                : point.severity === "HIGH"
+                ? "#f97316"
+                : point.severity === "MEDIUM"
+                ? "#f59e0b"
+                : "#3b82f6";
+
+            return (
+              <g
+                key={point.id}
+                transform={`translate(${pos.x}, ${pos.y})`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedCluster(null);
+                  setSelectedPoint(point);
+                }}
+                className="cursor-pointer pointer-events-auto group"
+              >
+                {/* Pulsing ring for critical */}
+                {point.severity === "CRITICAL" && (
+                  <circle
+                    r="16"
+                    fill="url(#criticalHalo)"
+                    className="animate-ping"
+                    style={{ animationDuration: "1.8s" }}
+                  />
+                )}
+                {/* Pin Shadow */}
+                <ellipse cx="0" cy="4" rx="5" ry="2" fill="#000000" opacity="0.4" />
+                {/* Outer halo */}
+                <circle
+                  r="10"
+                  fill={color}
+                  opacity="0.3"
+                  className="group-hover:opacity-60 transition-opacity"
+                />
+                {/* Center marker */}
+                <circle
+                  r="6.5"
+                  fill={color}
+                  stroke="#ffffff"
+                  strokeWidth="2"
+                  className="group-hover:scale-125 transition-transform shadow-md"
+                />
+              </g>
+            );
+          })}
+        </svg>
 
         {/* Selected Point Popover */}
         {selectedPoint && (
-          <div className="absolute top-4 left-4 z-40 max-w-sm w-[calc(100%-2rem)] sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2">
+          <div className="absolute top-4 left-4 z-40 max-w-sm w-[calc(100%-2rem)] sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2 pointer-events-auto">
             <div className="flex items-start justify-between">
               <div>
                 <span className="font-mono text-xs font-bold text-slate-500">
@@ -759,7 +812,7 @@ export function InfrastructureMap({
                     ? `/authority/reports/${selectedPoint.publicReference}`
                     : `/reports/${selectedPoint.publicReference}`
                 }
-                className="font-semibold text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1"
+                className="font-semibold text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1 cursor-pointer"
               >
                 View details <ExternalLink className="w-3 h-3" />
               </Link>
@@ -769,7 +822,7 @@ export function InfrastructureMap({
 
         {/* Selected Cluster Info Box */}
         {selectedCluster && (
-          <div className="absolute top-4 left-4 z-40 max-w-sm w-[calc(100%-2rem)] sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in">
+          <div className="absolute top-4 left-4 z-40 max-w-sm w-[calc(100%-2rem)] sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in pointer-events-auto">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-indigo-500" />
@@ -805,7 +858,7 @@ export function InfrastructureMap({
                         ? `/authority/reports/${p.publicReference}`
                         : `/reports/${p.publicReference}`
                     }
-                    className="font-medium text-slate-900 dark:text-white hover:text-emerald-600 truncate flex-1"
+                    className="font-medium text-slate-900 dark:text-white hover:text-emerald-600 truncate flex-1 cursor-pointer"
                   >
                     {p.title}
                   </Link>
