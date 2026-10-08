@@ -50,7 +50,7 @@ export default async function AuthorityLayout({
             </div>
             <div>
               <span className="font-bold text-white tracking-tight block text-base leading-none">
-                Chigir Ale
+                Chigr Ale
               </span>
               <span className="text-[10px] text-emerald-400 font-mono tracking-wider uppercase font-semibold">
                 Authority Portal

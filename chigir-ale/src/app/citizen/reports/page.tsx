@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge, SeverityBadge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
-  title: "My Reports — Chigir Ale",
+  title: "My Reports — Chigr Ale",
   description: "View and track all infrastructure reports submitted by you",
 };
 

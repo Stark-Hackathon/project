@@ -4,7 +4,7 @@ import { AuthorityRepository } from "@/server/repositories/authority.repository"
 import { AuthorityDashboard } from "@/features/authority/components/authority-dashboard";
 
 export const metadata: Metadata = {
-  title: "Authority Dashboard — Chigir Ale",
+  title: "Authority Dashboard — Chigr Ale",
   description: "Operational Cockpit for civic infrastructure triage, assignment, and resolution.",
 };
 

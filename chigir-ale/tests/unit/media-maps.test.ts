@@ -230,5 +230,18 @@ describe("Iteration 6: Media, Maps, Storage & Location Intelligence", () => {
       assert.equal(reverse.administrativeArea, "Kirkos Sub-City");
       assert.ok(reverse.formattedAddress.includes("Meskel Square"));
     });
+
+    it("should provide resilient fallback points with valid Addis Ababa coordinates", () => {
+      const fallbacks = MapService.getFallbackPoints();
+      assert.ok(fallbacks.length >= 6);
+
+      for (const p of fallbacks) {
+        assert.ok(p.latitude >= 8.8 && p.latitude <= 9.2, `Latitude ${p.latitude} out of Addis range`);
+        assert.ok(p.longitude >= 38.6 && p.longitude <= 38.9, `Longitude ${p.longitude} out of Addis range`);
+        assert.ok(p.publicReference.startsWith("CHI-"));
+        assert.ok(p.title.length > 0);
+        assert.ok(p.category.name.length > 0);
+      }
+    });
   });
 });

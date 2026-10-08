@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DeleteAccountButton } from "@/features/account/components/delete-account-button";
 
 export const metadata: Metadata = {
-  title: "Citizen Profile — Chigir Ale",
+  title: "Citizen Profile — Chigr Ale",
   description: "Account settings, notification preferences, and privacy information",
 };
 
@@ -126,7 +126,7 @@ export default async function ProfilePage() {
               🛡️ <strong>Location Privacy:</strong> Your exact GPS coordinates are encrypted and accessible only to authorized municipal field dispatchers. On public dashboards and maps, locations are generalized to protect home privacy.
             </p>
             <p>
-              📜 <strong>Evidence Integrity:</strong> Photographs uploaded to Chigir Ale are preserved in an audit-tracked domain storage layer for official municipal verification.
+              📜 <strong>Evidence Integrity:</strong> Photographs uploaded to Chigr Ale are preserved in an audit-tracked domain storage layer for official municipal verification.
             </p>
           </CardContent>
         </Card>
@@ -150,7 +150,7 @@ export default async function ProfilePage() {
         <div className="pt-2 flex justify-end">
           <form action={signOutAction}>
             <Button type="submit" variant="outline" className="text-slate-600 hover:text-slate-800 dark:text-slate-400">
-              Sign Out of Chigir Ale
+              Sign Out of Chigr Ale
             </Button>
           </form>
         </div>

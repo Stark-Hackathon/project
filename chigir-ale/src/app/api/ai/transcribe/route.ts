@@ -8,11 +8,13 @@ import { VoiceService } from "@/server/services/voice/voice.service";
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { base64Audio, simulatedText, languageHint } = body;
+    const { base64Audio, mimeType, simulatedText, speechTranscript, languageHint } = body;
 
     const result = await VoiceService.transcribe({
       base64Audio,
+      mimeType,
       simulatedText,
+      speechTranscript,
       languageHint,
     });
 

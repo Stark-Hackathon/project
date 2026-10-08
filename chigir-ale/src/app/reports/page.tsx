@@ -11,5 +11,5 @@ export default async function ReportsRedirectPage({ searchParams }: ReportsPageP
   if (ref && ref.trim()) {
     redirect(`/reports/${encodeURIComponent(ref.trim().toUpperCase())}`);
   }
-  redirect("/");
+  redirect("/explore");
 }

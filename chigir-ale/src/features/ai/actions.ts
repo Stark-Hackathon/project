@@ -116,7 +116,9 @@ export async function retryAIJobAction(jobId: string) {
  */
 export async function transcribeVoiceAction(input: {
   base64Audio?: string;
+  mimeType?: string;
   simulatedText?: string;
+  speechTranscript?: string;
   languageHint?: "en" | "am" | "om" | "auto";
 }) {
   try {

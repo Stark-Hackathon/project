@@ -4,7 +4,7 @@ import { NearbyIssuesService } from "@/server/services/nearby-issues.service";
 import { NearbyIssuesView } from "@/features/community/components/nearby-issues-view";
 
 export const metadata: Metadata = {
-  title: "Nearby Issues — Chigir Ale",
+  title: "Nearby Issues — Chigr Ale",
   description: "Explore community infrastructure reports around your location to prevent duplicates",
 };
 

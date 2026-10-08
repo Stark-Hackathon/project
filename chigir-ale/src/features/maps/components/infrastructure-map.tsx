@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useTransition, useMemo } from "react";
+import React, { useState, useEffect, useRef, useTransition, useCallback } from "react";
 import Link from "next/link";
 import {
   MapPin,
@@ -14,8 +14,12 @@ import {
   Building,
   Filter,
   ExternalLink,
+  AlertCircle,
+  CheckCircle2,
+  Globe,
 } from "lucide-react";
 import type { Severity, ReportStatus } from "@prisma/client";
+import type * as Leaflet from "leaflet";
 import { getMapDataAction, geocodeAddressAction } from "@/features/maps/actions";
 import type { MapPoint, MapCluster } from "@/server/services/map.service";
 
@@ -24,6 +28,9 @@ interface InfrastructureMapProps {
   initialCategories?: Array<{ id: string; name: string; slug: string; icon: string | null }>;
   initialDepartments?: Array<{ id: string; name: string; slug: string }>;
 }
+
+const ADDIS_ABABA_CENTER = { lat: 9.0108, lng: 38.7616 };
+const DEFAULT_ZOOM = 13;
 
 export function InfrastructureMap({
   mode,
@@ -40,19 +47,34 @@ export function InfrastructureMap({
   const [selectedDepartment, setSelectedDepartment] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Map viewport (Addis Ababa default center)
-  const [centerLat, setCenterLat] = useState(9.0108);
-  const [centerLng, setCenterLng] = useState(38.7616);
-  const [zoom, setZoom] = useState(13); // Zoom levels 10 to 18
+  // Map DOM and instance references
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<Leaflet.Map | null>(null);
+  const markersGroupRef = useRef<Leaflet.LayerGroup | null>(null);
+  const leafletRef = useRef<typeof Leaflet | null>(null);
 
-  // Data state
+  // Map state
   const [clusters, setClusters] = useState<MapCluster[]>([]);
   const [singletons, setSingletons] = useState<MapPoint[]>([]);
   const [totalPoints, setTotalPoints] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [mapLoaded, setMapLoaded] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<MapPoint | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<MapCluster | null>(null);
+  const [tileProviderName, setTileProviderName] = useState<string>("OpenStreetMap / CartoDB");
+  const [geoNotice, setGeoNotice] = useState<{
+    type: "info" | "success" | "error";
+    message: string;
+  } | null>(null);
 
+  // Clear notice after 5 seconds
+  useEffect(() => {
+    if (!geoNotice) return;
+    const t = setTimeout(() => setGeoNotice(null), 5000);
+    return () => clearTimeout(t);
+  }, [geoNotice]);
+
+  // Load Map Data
   useEffect(() => {
     let ignore = false;
 
@@ -78,7 +100,275 @@ export function InfrastructureMap({
     };
   }, [mode, selectedCategory, selectedSeverity, selectedStatus, selectedDepartment]);
 
-  // Geocoding Search
+  // Initialize Leaflet Map (Browser-only, SSR-safe)
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function initLeaflet() {
+      if (typeof window === "undefined" || !mapContainerRef.current) return;
+
+      // Dynamically import Leaflet only in browser to avoid SSR `window is not defined`
+      const leafletModule = await import("leaflet");
+      const L = leafletModule.default;
+      if (isCancelled) return;
+      leafletRef.current = L;
+
+      // Clean up previous instance if container was reused
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+
+      // Ensure container has no remaining leaflet internal state
+      const container = mapContainerRef.current as HTMLDivElement & { _leaflet_id?: number };
+      if (container._leaflet_id) {
+        delete container._leaflet_id;
+      }
+
+      // Initialize map instance centered on Addis Ababa
+      const map = L.map(container, {
+        center: [ADDIS_ABABA_CENTER.lat, ADDIS_ABABA_CENTER.lng],
+        zoom: DEFAULT_ZOOM,
+        zoomControl: false,
+        attributionControl: false,
+        maxZoom: 18,
+        minZoom: 10,
+      });
+
+      mapInstanceRef.current = map;
+
+      // Configure Tile Layer Strategy:
+      // Priority 1: Mapbox IF NEXT_PUBLIC_MAPBOX_TOKEN is provided
+      // Priority 2: CartoDB Voyager tiles (crisp, modern civic street details, zero API key)
+      // Fallback: Standard OpenStreetMap tiles
+      const mapboxToken =
+        process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAP_API_KEY;
+
+      let primaryTileUrl =
+        "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+      let primarySubdomains = "abcd";
+
+      if (mapboxToken && mapboxToken !== "placeholder-map-api-key") {
+        primaryTileUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`;
+        primarySubdomains = "abc";
+        setTileProviderName("Mapbox Streets");
+      } else {
+        setTileProviderName("OpenStreetMap / CartoDB");
+      }
+
+      const primaryLayer = L.tileLayer(primaryTileUrl, {
+        subdomains: primarySubdomains,
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors, CartoDB",
+      });
+
+      // Attach tile error listener to gracefully switch to OpenStreetMap if primary fails
+      primaryLayer.on("tileerror", () => {
+        if (!isCancelled && mapInstanceRef.current) {
+          console.warn("Primary tile provider failed, falling back to OpenStreetMap tiles.");
+          setTileProviderName("OpenStreetMap (Standard)");
+          const osmFallback = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: "© OpenStreetMap contributors",
+          });
+          osmFallback.addTo(mapInstanceRef.current);
+        }
+      });
+
+      primaryLayer.addTo(map);
+
+      // Create a layer group to hold markers and clusters
+      const markersGroup = L.layerGroup();
+      markersGroup.addTo(map);
+      markersGroupRef.current = markersGroup;
+
+      // Trigger size invalidation after mount to ensure accurate tile dimensions
+      setTimeout(() => {
+        if (!isCancelled && mapInstanceRef.current) {
+          mapInstanceRef.current.invalidateSize();
+        }
+      }, 150);
+
+      setMapLoaded(true);
+    }
+
+    initLeaflet();
+
+    return () => {
+      isCancelled = true;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+      markersGroupRef.current = null;
+      setMapLoaded(false);
+    };
+  }, []);
+
+  // Update Markers when clusters, singletons, or mapLoaded change
+  const updateMarkers = useCallback(() => {
+    const map = mapInstanceRef.current;
+    const markersGroup = markersGroupRef.current;
+    const L = leafletRef.current;
+
+    if (!map || !markersGroup || !L) return;
+
+    // Clear previous markers
+    markersGroup.clearLayers();
+
+    // 1. Render Clusters
+    clusters.forEach((cluster) => {
+      const isCritical = cluster.criticalCount > 0;
+      const size = Math.min(42, Math.max(26, 22 + cluster.count * 2));
+      const bgColor = isCritical ? "#ef4444" : "#4f46e5";
+      const ringColor = isCritical ? "rgba(239, 68, 68, 0.35)" : "rgba(79, 70, 229, 0.35)";
+
+      const clusterHtml = `
+        <div style="
+          width: ${size}px;
+          height: ${size}px;
+          background-color: ${bgColor};
+          border: 2.5px solid #ffffff;
+          border-radius: 9999px;
+          box-shadow: 0 4px 14px ${ringColor};
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #ffffff;
+          font-weight: 800;
+          font-size: 11px;
+          cursor: pointer;
+          transition: transform 0.15s ease-out;
+        " class="hover:scale-110">
+          ${cluster.count}
+        </div>
+      `;
+
+      const clusterIcon = L.divIcon({
+        html: clusterHtml,
+        className: "custom-cluster-icon",
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+
+      const marker = L.marker([cluster.centerLatitude, cluster.centerLongitude], {
+        icon: clusterIcon,
+        title: `${cluster.count} incidents clustered`,
+      });
+
+      marker.on("click", () => {
+        setSelectedPoint(null);
+        setSelectedCluster(cluster);
+        map.setView(
+          [cluster.centerLatitude, cluster.centerLongitude],
+          Math.min(17, map.getZoom() + 2),
+          { animate: true }
+        );
+      });
+
+      markersGroup.addLayer(marker);
+    });
+
+    // 2. Render Singletons (Individual incident pins)
+    singletons.forEach((point) => {
+      const color =
+        point.severity === "CRITICAL"
+          ? "#ef4444"
+          : point.severity === "HIGH"
+          ? "#f97316"
+          : point.severity === "MEDIUM"
+          ? "#f59e0b"
+          : "#3b82f6";
+
+      const pinHtml = `
+        <div style="position: relative; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <div style="
+            width: 14px;
+            height: 14px;
+            background-color: ${color};
+            border: 2px solid #ffffff;
+            border-radius: 9999px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          "></div>
+          ${
+            point.severity === "CRITICAL"
+              ? `<div style="
+                  position: absolute;
+                  inset: 2px;
+                  border-radius: 9999px;
+                  border: 2px solid ${color};
+                  animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+                "></div>`
+              : ""
+          }
+        </div>
+      `;
+
+      const pinIcon = L.divIcon({
+        html: pinHtml,
+        className: "custom-point-pin",
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+
+      const marker = L.marker([point.latitude, point.longitude], {
+        icon: pinIcon,
+        title: point.title,
+      });
+
+      // Leaflet Popup binding
+      const popupHtml = `
+        <div style="padding: 12px; font-family: inherit; font-size: 12px; max-width: 260px;">
+          <div style="font-size: 10px; font-weight: 700; color: #64748b; font-family: monospace;">
+            ${point.publicReference}
+          </div>
+          <div style="font-weight: 700; color: #0f172a; font-size: 13px; margin-top: 2px; line-height: 1.3;">
+            ${point.title}
+          </div>
+          <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
+            <span style="background: ${color}20; color: ${color}; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">
+              ${point.severity}
+            </span>
+            <span style="background: #f1f5f9; color: #475569; padding: 2px 6px; border-radius: 4px; font-size: 10px;">
+              ${point.category.icon ? point.category.icon + " " : ""}${point.category.name}
+            </span>
+          </div>
+          <div style="color: #64748b; font-size: 11px; margin-top: 6px;">
+            📍 ${point.formattedAddress || point.administrativeArea || "Addis Ababa"}
+          </div>
+          <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #f1f5f9; text-align: right;">
+            <a href="${
+              isAuthority
+                ? `/authority/reports/${point.publicReference}`
+                : `/reports/${point.publicReference}`
+            }" style="color: #059669; font-weight: 700; text-decoration: none;">
+              Inspect issue →
+            </a>
+          </div>
+        </div>
+      `;
+
+      marker.bindPopup(popupHtml, {
+        className: "chigr-map-popup",
+        closeButton: true,
+      });
+
+      marker.on("click", () => {
+        setSelectedCluster(null);
+        setSelectedPoint(point);
+      });
+
+      markersGroup.addLayer(marker);
+    });
+  }, [clusters, singletons, isAuthority]);
+
+  useEffect(() => {
+    if (mapLoaded) {
+      updateMarkers();
+    }
+  }, [mapLoaded, updateMarkers]);
+
+  // Geocoding Search Submission
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
@@ -87,45 +377,86 @@ export function InfrastructureMap({
       const res = await geocodeAddressAction(searchQuery.trim());
       if (res.success && res.data.length > 0) {
         const first = res.data[0]!;
-        setCenterLat(first.latitude);
-        setCenterLng(first.longitude);
-        setZoom(15);
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.flyTo([first.latitude, first.longitude], 15, {
+            duration: 1.2,
+          });
+        }
+        setGeoNotice({
+          type: "success",
+          message: `Moved to ${first.formattedAddress}`,
+        });
+      } else {
+        setGeoNotice({
+          type: "info",
+          message: "Location not found in local catalog. Centered on Addis Ababa.",
+        });
       }
     });
   };
 
-  // User Location
+  // Safe Geolocation with robust fallback and error handling
   const handleLocateMe = () => {
-    if (!navigator.geolocation) return;
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setGeoNotice({
+        type: "error",
+        message: "Geolocation is not supported by your current browser.",
+      });
+      return;
+    }
+
+    setGeoNotice({
+      type: "info",
+      message: "Requesting location coordinates...",
+    });
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setCenterLat(pos.coords.latitude);
-        setCenterLng(pos.coords.longitude);
-        setZoom(15);
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.flyTo([lat, lng], 16, { duration: 1.2 });
+        }
+        setGeoNotice({
+          type: "success",
+          message: `Location detected (±${Math.round(pos.coords.accuracy)}m accuracy)`,
+        });
       },
-      () => {},
-      { enableHighAccuracy: true }
+      (err) => {
+        let msg = "Could not obtain location. Centered on Addis Ababa.";
+        if (err.code === err.PERMISSION_DENIED) {
+          msg = "Location permission denied. Showing default Addis Ababa view.";
+        } else if (err.code === err.TIMEOUT) {
+          msg = "Location request timed out. Showing default Addis Ababa view.";
+        }
+
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.setView([ADDIS_ABABA_CENTER.lat, ADDIS_ABABA_CENTER.lng], 13);
+        }
+        setGeoNotice({
+          type: "info",
+          message: msg,
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     );
   };
 
-  // Coordinate Projection Helper for SVG Canvas
-  // Maps geo coordinates into [0, 800] x [0, 500] coordinate space
-  const project = useMemo(() => {
-    // Zoom factor scales the bounding window
-    const spanLat = 0.15 / (zoom / 12);
-    const spanLng = 0.22 / (zoom / 12);
+  // Map Navigation Controls
+  const handleZoomIn = () => {
+    if (mapInstanceRef.current) mapInstanceRef.current.zoomIn();
+  };
 
-    const minLat = centerLat - spanLat / 2;
-    const maxLat = centerLat + spanLat / 2;
-    const minLng = centerLng - spanLng / 2;
-    const maxLng = centerLng + spanLng / 2;
+  const handleZoomOut = () => {
+    if (mapInstanceRef.current) mapInstanceRef.current.zoomOut();
+  };
 
-    return (lat: number, lng: number) => {
-      const x = ((lng - minLng) / (maxLng - minLng)) * 800;
-      const y = (1 - (lat - minLat) / (maxLat - minLat)) * 500;
-      return { x, y, visible: x >= -30 && x <= 830 && y >= -30 && y <= 530 };
-    };
-  }, [centerLat, centerLng, zoom]);
+  const handleResetView = () => {
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([ADDIS_ABABA_CENTER.lat, ADDIS_ABABA_CENTER.lng], DEFAULT_ZOOM);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -133,7 +464,7 @@ export function InfrastructureMap({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="flex items-center gap-3">
           <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
               isAuthority
                 ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
                 : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
@@ -164,7 +495,7 @@ export function InfrastructureMap({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center gap-3 text-xs shrink-0">
           <span className="font-semibold text-slate-700 dark:text-slate-300">
             {totalPoints} incidents mapped
           </span>
@@ -192,7 +523,7 @@ export function InfrastructureMap({
             </div>
             <button
               type="submit"
-              className="px-4 py-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity"
+              className="px-4 py-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity cursor-pointer shrink-0"
             >
               Pan
             </button>
@@ -202,7 +533,7 @@ export function InfrastructureMap({
           <button
             type="button"
             onClick={handleLocateMe}
-            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors"
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
           >
             <Navigation className="w-3.5 h-3.5 text-blue-500" /> Locate Me
           </button>
@@ -217,10 +548,7 @@ export function InfrastructureMap({
           {/* Category Filter */}
           <select
             value={selectedCategory}
-            onChange={(e) => {
-              setIsLoading(true);
-              setSelectedCategory(e.target.value);
-            }}
+            onChange={(e) => setSelectedCategory(e.target.value)}
             className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-medium"
           >
             <option value="ALL">All Categories</option>
@@ -234,10 +562,7 @@ export function InfrastructureMap({
           {/* Severity Filter */}
           <select
             value={selectedSeverity}
-            onChange={(e) => {
-              setIsLoading(true);
-              setSelectedSeverity(e.target.value as Severity | "ALL");
-            }}
+            onChange={(e) => setSelectedSeverity(e.target.value as Severity | "ALL")}
             className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-medium"
           >
             <option value="ALL">All Severities</option>
@@ -251,10 +576,7 @@ export function InfrastructureMap({
           {isAuthority && initialDepartments.length > 0 && (
             <select
               value={selectedDepartment}
-              onChange={(e) => {
-                setIsLoading(true);
-                setSelectedDepartment(e.target.value);
-              }}
+              onChange={(e) => setSelectedDepartment(e.target.value)}
               className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-medium"
             >
               <option value="ALL">All Departments</option>
@@ -269,10 +591,7 @@ export function InfrastructureMap({
           {/* Status Filter */}
           <select
             value={selectedStatus}
-            onChange={(e) => {
-              setIsLoading(true);
-              setSelectedStatus(e.target.value as ReportStatus | "ALL");
-            }}
+            onChange={(e) => setSelectedStatus(e.target.value as ReportStatus | "ALL")}
             className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-medium"
           >
             <option value="ALL">All Statuses</option>
@@ -286,8 +605,28 @@ export function InfrastructureMap({
         </div>
       </div>
 
+      {/* Notice Banner (Geolocation status / geocoding alert) */}
+      {geoNotice && (
+        <div
+          className={`flex items-center gap-2 p-3 rounded-xl text-xs transition animate-in fade-in ${
+            geoNotice.type === "success"
+              ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
+              : geoNotice.type === "error"
+              ? "bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800"
+              : "bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800"
+          }`}
+        >
+          {geoNotice.type === "success" ? (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          )}
+          <span>{geoNotice.message}</span>
+        </div>
+      )}
+
       {/* Interactive Map Canvas Container */}
-      <div className="relative bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden h-[540px]">
+      <div className="relative bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden h-[540px] w-full">
         {/* Loading Overlay */}
         {isLoading && (
           <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px] z-30 flex items-center justify-center">
@@ -297,40 +636,44 @@ export function InfrastructureMap({
           </div>
         )}
 
+        {/* Real Leaflet Map DOM Element */}
+        <div
+          ref={mapContainerRef}
+          className="w-full h-full min-h-[500px] z-0"
+          tabIndex={0}
+          aria-label="Interactive city infrastructure map"
+        />
+
         {/* Zoom & Reset Controls */}
-        <div className="absolute top-4 right-4 z-20 flex flex-col gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-xl shadow-md">
+        <div className="absolute top-4 right-4 z-20 flex flex-col gap-1.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 p-1.5 rounded-xl shadow-md backdrop-blur-md">
           <button
             type="button"
             title="Zoom In"
-            onClick={() => setZoom((z) => Math.min(18, z + 1))}
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+            onClick={handleZoomIn}
+            className="p-1.5 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
           <button
             type="button"
             title="Zoom Out"
-            onClick={() => setZoom((z) => Math.max(10, z - 1))}
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+            onClick={handleZoomOut}
+            className="p-1.5 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
           <button
             type="button"
             title="Reset View to Addis Ababa Center"
-            onClick={() => {
-              setCenterLat(9.0108);
-              setCenterLng(38.7616);
-              setZoom(13);
-            }}
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+            onClick={handleResetView}
+            className="p-1.5 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
         </div>
 
         {/* Legend Overlay */}
-        <div className="absolute bottom-4 left-4 z-20 bg-slate-900/85 backdrop-blur-md border border-slate-800 px-3.5 py-2.5 rounded-xl text-[11px] text-slate-300 flex items-center gap-3">
+        <div className="absolute bottom-4 left-4 z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 px-3.5 py-2 rounded-xl text-[11px] text-slate-700 dark:text-slate-300 flex items-center gap-3 shadow-md">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-rose-500/30" />
             <span>Critical</span>
@@ -349,126 +692,15 @@ export function InfrastructureMap({
           </div>
         </div>
 
-        {/* SVG Vector Map Rendering */}
-        <svg
-          viewBox="0 0 800 500"
-          className="w-full h-full cursor-grab active:cursor-grabbing select-none"
-        >
-          {/* Background Map Grid */}
-          <defs>
-            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" strokeWidth="0.5" />
-            </pattern>
-            {/* Pulsing ring for critical clusters */}
-            <radialGradient id="criticalPulse" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
-              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <rect width="800" height="500" fill="#090d16" />
-          <rect width="800" height="500" fill="url(#grid)" />
-
-          {/* Schematic Major Arterial Roads for Addis Ababa Context */}
-          <g stroke="#1e293b" strokeWidth="1.5" fill="none" opacity="0.6">
-            <path d="M 100 250 Q 400 240 700 260" />
-            <path d="M 400 50 Q 390 250 410 450" />
-            <path d="M 250 100 Q 400 250 550 400" />
-            <path d="M 550 100 Q 400 250 250 400" />
-          </g>
-
-          {/* Render Clusters (Spec Sections 39 & 40) */}
-          {clusters.map((cluster) => {
-            const pos = project(cluster.centerLatitude, cluster.centerLongitude);
-            if (!pos.visible) return null;
-
-            const isCritical = cluster.criticalCount > 0;
-            const size = Math.min(38, Math.max(22, 18 + cluster.count * 2));
-
-            return (
-              <g
-                key={cluster.id}
-                transform={`translate(${pos.x}, ${pos.y})`}
-                onClick={() => {
-                  setSelectedPoint(null);
-                  setSelectedCluster(cluster);
-                  setCenterLat(cluster.centerLatitude);
-                  setCenterLng(cluster.centerLongitude);
-                  setZoom((z) => Math.min(17, z + 2));
-                }}
-                className="cursor-pointer group"
-              >
-                {/* Glow ring */}
-                <circle
-                  r={size + 6}
-                  fill={isCritical ? "url(#criticalPulse)" : "#6366f1"}
-                  opacity="0.25"
-                  className="group-hover:opacity-50 transition-opacity"
-                />
-                {/* Main bubble */}
-                <circle
-                  r={size}
-                  fill={isCritical ? "#ef4444" : "#4f46e5"}
-                  stroke="#ffffff"
-                  strokeWidth="2"
-                  className="shadow-lg group-hover:scale-110 transition-transform"
-                />
-                {/* Cluster Count Text */}
-                <text
-                  textAnchor="middle"
-                  dy=".3em"
-                  fill="#ffffff"
-                  fontSize="11"
-                  fontWeight="bold"
-                  pointerEvents="none"
-                >
-                  {cluster.count}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Render Singletons (Individual Pins) */}
-          {singletons.map((point) => {
-            const pos = project(point.latitude, point.longitude);
-            if (!pos.visible) return null;
-
-            const color =
-              point.severity === "CRITICAL"
-                ? "#ef4444"
-                : point.severity === "HIGH"
-                ? "#f97316"
-                : point.severity === "MEDIUM"
-                ? "#f59e0b"
-                : "#3b82f6";
-
-            return (
-              <g
-                key={point.id}
-                transform={`translate(${pos.x}, ${pos.y})`}
-                onClick={() => {
-                  setSelectedCluster(null);
-                  setSelectedPoint(point);
-                }}
-                className="cursor-pointer group"
-              >
-                {/* Pin shadow */}
-                <ellipse cx="0" cy="5" rx="5" ry="2" fill="#000000" opacity="0.4" />
-                {/* Pin Body */}
-                <circle
-                  r="7"
-                  fill={color}
-                  stroke="#ffffff"
-                  strokeWidth="2"
-                  className="group-hover:scale-125 transition-transform"
-                />
-              </g>
-            );
-          })}
-        </svg>
+        {/* Tile Provider Pill */}
+        <div className="absolute bottom-4 right-4 z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200 dark:border-slate-800 px-2.5 py-1 rounded-lg text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 shadow-sm">
+          <Globe className="w-3 h-3 text-slate-400" />
+          <span>{tileProviderName}</span>
+        </div>
 
         {/* Selected Point Popover */}
         {selectedPoint && (
-          <div className="absolute top-4 left-4 z-40 max-w-sm w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2">
+          <div className="absolute top-4 left-4 z-40 max-w-sm w-[calc(100%-2rem)] sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2">
             <div className="flex items-start justify-between">
               <div>
                 <span className="font-mono text-xs font-bold text-slate-500">
@@ -481,7 +713,7 @@ export function InfrastructureMap({
               <button
                 type="button"
                 onClick={() => setSelectedPoint(null)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg leading-none"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg leading-none cursor-pointer"
               >
                 ×
               </button>
@@ -492,7 +724,11 @@ export function InfrastructureMap({
                 className={`px-2 py-0.5 rounded-full font-semibold ${
                   selectedPoint.severity === "CRITICAL"
                     ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
-                    : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    : selectedPoint.severity === "HIGH"
+                    ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
+                    : selectedPoint.severity === "MEDIUM"
+                    ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                    : "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
                 }`}
               >
                 {selectedPoint.severity}
@@ -501,12 +737,13 @@ export function InfrastructureMap({
                 {selectedPoint.status.replace("_", " ")}
               </span>
               <span className="text-slate-500">
-                {selectedPoint.category.icon} {selectedPoint.category.name}
+                {selectedPoint.category.icon ? selectedPoint.category.icon + " " : ""}
+                {selectedPoint.category.name}
               </span>
             </div>
 
             <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
               <span className="truncate">
                 {selectedPoint.formattedAddress || selectedPoint.administrativeArea || "Addis Ababa"}
               </span>
@@ -532,7 +769,7 @@ export function InfrastructureMap({
 
         {/* Selected Cluster Info Box */}
         {selectedCluster && (
-          <div className="absolute top-4 left-4 z-40 max-w-sm w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in">
+          <div className="absolute top-4 left-4 z-40 max-w-sm w-[calc(100%-2rem)] sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-indigo-500" />
@@ -543,7 +780,7 @@ export function InfrastructureMap({
               <button
                 type="button"
                 onClick={() => setSelectedCluster(null)}
-                className="text-slate-400 hover:text-slate-600 text-lg leading-none"
+                className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
               >
                 ×
               </button>
@@ -553,7 +790,7 @@ export function InfrastructureMap({
               Predominant category: <strong>{selectedCluster.dominantCategory}</strong>
               {selectedCluster.criticalCount > 0 && (
                 <span className="text-rose-600 font-bold block mt-0.5">
-                  ⚠️ Contains {selectedCluster.criticalCount} Critical priority incident(s)
+                  ⚠️ Contains {selectedCluster.criticalCount} Critical incident(s)
                 </span>
               )}
             </p>

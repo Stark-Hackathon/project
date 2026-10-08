@@ -5,7 +5,7 @@ import { SearchService } from "@/server/services/search.service";
 import { SearchView } from "@/features/search/components/search-view";
 
 export const metadata: Metadata = {
-  title: "Search Civic Reports — Chigir Ale",
+  title: "Search Civic Reports — Chigr Ale",
   description: "Search infrastructure reports by public reference, category, subcity, and keywords.",
 };
 

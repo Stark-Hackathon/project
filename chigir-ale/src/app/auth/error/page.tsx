@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Auth Error — Chigir Ale",
+  title: "Auth Error — Chigr Ale",
 };
 
 export default function AuthErrorPage() {

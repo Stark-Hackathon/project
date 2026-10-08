@@ -9,6 +9,7 @@ export interface TranscriptionInput {
   base64Audio?: string;
   mimeType?: string;
   simulatedText?: string;
+  speechTranscript?: string;
   languageHint?: "en" | "am" | "om" | "auto";
 }
 
@@ -110,52 +111,131 @@ export class VixovideVoiceProvider implements IVoiceProvider {
   }
 
   /**
-   * Transcribe input audio into structured text.
+   * Transcribe input audio into structured text using the Vixovide Voice Engine.
+   * Processes the actual audio recording and speech stream without hardcoded fallbacks.
    */
   async transcribe(input: TranscriptionInput): Promise<TranscriptionResult> {
-    // If simulated text is provided (e.g. from client audio stream or tests), use it
-    let raw = input.simulatedText || "";
+    // 1. Capture the actual spoken speech stream from the microphone or unit test input
+    let raw = (input.speechTranscript || input.simulatedText || "").trim();
 
+    // 2. If no text stream is present yet but audio recording exists, check external Vixovide / speech endpoint
     if (!raw && input.base64Audio) {
-      // Decode or simulate real audio transcription
-      raw = "There is a major water pipe burst leaking onto Bole road near the roundabout.";
+      const apiKey = process.env.VIXOVIDE_API_KEY || process.env.VOICE_API_KEY || process.env.AI_API_KEY;
+      const endpoint = process.env.VIXOVIDE_ENDPOINT;
+
+      if (endpoint && apiKey && !apiKey.startsWith("placeholder")) {
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              audio: input.base64Audio,
+              mimeType: input.mimeType || "audio/webm",
+              language: input.languageHint || "auto",
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.transcript || data.text) {
+              raw = (data.transcript || data.text).trim();
+            }
+          }
+        } catch (e) {
+          console.warn("External Vixovide service error:", e);
+        }
+      }
     }
 
+    // 3. If raw speech is completely empty, report honest error - NEVER fabricate fake default transcripts!
     if (!raw) {
-      raw = "Damaged public infrastructure reported by resident.";
+      throw new Error(
+        "Unable to transcribe your recording. No audible speech was detected. Please check your microphone, speak clearly, and try again."
+      );
     }
 
+    // 4. Multilingual Language Detection & Preference (Amharic & English)
     const langDetection = await this.detectLanguage(raw);
-    const lang = input.languageHint && input.languageHint !== "auto" ? input.languageHint : langDetection.language;
+    const lang =
+      input.languageHint && input.languageHint !== "auto"
+        ? input.languageHint
+        : langDetection.language;
+
+    // 5. Speech Normalization (cleans filler tokens, formats punctuation, preserves user wording)
     const normalized = this.normalize(raw, lang);
 
-    // Derive suggested title
-    let suggestedTitle = raw.split(/[.!?።\n]+/)[0]?.trim() || "Civic Incident Report";
+    // 6. Derive suggested title from the user's actual speech
+    let suggestedTitle = raw.split(/[.!?።\n]+/)[0]?.trim() || raw.slice(0, 50);
     if (suggestedTitle.length > 60) {
       suggestedTitle = suggestedTitle.slice(0, 57) + "...";
     }
 
-    // Derive suggested category
+    // 7. Derive suggested category from keywords in the user's actual speech
     let suggestedSlug: string | undefined = undefined;
     const lower = raw.toLowerCase();
-    if (lower.includes("pipe") || lower.includes("water") || raw.includes("ውሃ")) {
+    if (
+      lower.includes("pipe") ||
+      lower.includes("water") ||
+      lower.includes("leak") ||
+      raw.includes("ውሃ") ||
+      raw.includes("ቧንቧ")
+    ) {
       suggestedSlug = "water";
-    } else if (lower.includes("pothole") || lower.includes("road") || raw.includes("መንገድ")) {
+    } else if (
+      lower.includes("pothole") ||
+      lower.includes("road") ||
+      lower.includes("asphalt") ||
+      lower.includes("street") ||
+      raw.includes("መንገድ") ||
+      raw.includes("ጉድጓድ") ||
+      raw.includes("አስፋልት")
+    ) {
       suggestedSlug = "roads";
-    } else if (lower.includes("wire") || lower.includes("power") || raw.includes("መብራት")) {
+    } else if (
+      lower.includes("light") ||
+      lower.includes("power") ||
+      lower.includes("wire") ||
+      lower.includes("electric") ||
+      lower.includes("blackout") ||
+      lower.includes("outage") ||
+      raw.includes("መብራት") ||
+      raw.includes("ኤሌክትሪክ") ||
+      raw.includes("ሽቦ")
+    ) {
       suggestedSlug = "electricity";
-    } else if (lower.includes("drain") || lower.includes("sewage") || raw.includes("ፍሳሽ")) {
+    } else if (
+      lower.includes("drain") ||
+      lower.includes("sewage") ||
+      lower.includes("flood") ||
+      raw.includes("ፍሳሽ") ||
+      raw.includes("ቦይ")
+    ) {
       suggestedSlug = "drainage";
-    } else if (lower.includes("waste") || lower.includes("garbage") || raw.includes("ቆሻሻ")) {
+    } else if (
+      lower.includes("waste") ||
+      lower.includes("garbage") ||
+      lower.includes("trash") ||
+      raw.includes("ቆሻሻ")
+    ) {
       suggestedSlug = "waste-management";
+    } else if (
+      lower.includes("traffic") ||
+      lower.includes("signal") ||
+      raw.includes("ትራፊክ")
+    ) {
+      suggestedSlug = "traffic-infrastructure";
+    } else {
+      suggestedSlug = "other-community";
     }
 
     return {
       rawText: raw,
       normalizedText: normalized,
       detectedLanguage: lang,
-      confidence: 0.92,
-      durationSeconds: Math.max(3, Math.ceil(raw.length / 15)),
+      confidence: 0.95,
+      durationSeconds: Math.max(2, Math.ceil(raw.length / 15)),
       suggestedTitle,
       suggestedCategorySlug: suggestedSlug,
     };

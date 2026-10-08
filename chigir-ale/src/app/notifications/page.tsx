@@ -5,7 +5,7 @@ import { NotificationService } from "@/server/services/notifications";
 import { NotificationCenter } from "@/features/notifications/components/notification-center";
 
 export const metadata: Metadata = {
-  title: "Notifications — Chigir Ale",
+  title: "Notifications — Chigr Ale",
   description: "View and manage your infrastructure incident notifications and updates.",
 };
 

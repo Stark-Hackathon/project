@@ -14,6 +14,16 @@ import {
 import { transcribeVoiceAction, translateTextAction } from "@/features/ai/actions";
 import type { TranscriptionResult } from "@/server/services/voice/voice.service";
 
+const DEMO_AMHARIC_PROMPTS: string[] = [
+  "በቦሌ መንገድ ላይ ትልቅ የውሃ ቧንቧ ፈንድቶ መንገዱ ሙሉ በሙሉ በውሃ ተጥለቅልቋል",
+  "በመገናኛ አደባባይ አቅራቢያ የመንገድ መብራት ባለመስራቱ ምክንያት ከፍተኛ የትራፊክ መጨናነቅ አለ",
+];
+
+const DEMO_ENGLISH_PROMPTS: string[] = [
+  "Major water pipe burst near Bole Medhanialem flooding the main roadway",
+  "Deep pothole on the ring road damaging vehicles during night commute",
+];
+
 interface VoiceRecorderAssistantProps {
   onTranscriptionComplete: (data: {
     title: string;
@@ -21,20 +31,6 @@ interface VoiceRecorderAssistantProps {
     suggestedCategorySlug?: string;
   }) => void;
 }
-
-const SAMPLE_AMHARIC_PROMPTS = [
-  "የውሃ ቧንቧ ፈንድቶ መንገዱን በሙሉ አጥለቅልቆታል",
-  "መንገዱ ላይ ትልቅ አደገኛ ጉድጓድ ተፈጥሮ መኪናዎችን እየጎዳ ነው",
-  "የመንገድ መብራት ባለመስራቱ ምክንያት ሌሊት አካባቢው ጨለማ ሆኗል",
-  "የፍሳሽ ቦይ ሞልቶ ቆሻሻው ወደ መኖሪያ ቤቶች እየገባ ነው",
-];
-
-const SAMPLE_ENGLISH_PROMPTS = [
-  "There is a major water pipe burst leaking onto the main road near the roundabout.",
-  "Large hazardous pothole damaging car tires right in front of the commercial bank.",
-  "The streetlights have been completely dark for three consecutive nights.",
-  "Overflowing sewage gutter causing public health concern and foul odors.",
-];
 
 export function VoiceRecorderAssistant({
   onTranscriptionComplete,
@@ -74,12 +70,11 @@ export function VoiceRecorderAssistant({
     }
     setIsRecording(false);
 
-    // Pick simulated text or user input
-    const textToProcess =
-      simulatedInput ||
-      (languageHint === "am"
-        ? SAMPLE_AMHARIC_PROMPTS[Math.floor(Math.random() * SAMPLE_AMHARIC_PROMPTS.length)]
-        : SAMPLE_ENGLISH_PROMPTS[Math.floor(Math.random() * SAMPLE_ENGLISH_PROMPTS.length)]);
+    const textToProcess = simulatedInput?.trim() || "";
+    if (!textToProcess) {
+      setErrorMsg("No audible speech was provided. Please speak into your microphone and try again.");
+      return;
+    }
 
     startTransition(async () => {
       const res = await transcribeVoiceAction({
@@ -241,12 +236,12 @@ export function VoiceRecorderAssistant({
                     Or click a sample voice scenario:
                   </span>
                   <div className="grid grid-cols-1 gap-1.5">
-                    {(languageHint === "am" ? SAMPLE_AMHARIC_PROMPTS : SAMPLE_ENGLISH_PROMPTS).slice(0, 2).map((sample, i) => (
+                    {(languageHint === "am" ? DEMO_AMHARIC_PROMPTS : DEMO_ENGLISH_PROMPTS).slice(0, 2).map((sample: string, i: number) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => stopRecording(sample)}
-                        className="text-left p-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 text-[11px] text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 transition-colors line-clamp-1"
+                        className="text-left p-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 text-[11px] text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 transition-colors line-clamp-1 cursor-pointer"
                       >
                         🗣️ &ldquo;{sample}&rdquo;
                       </button>

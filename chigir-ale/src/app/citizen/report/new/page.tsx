@@ -6,7 +6,7 @@ import { CategoryRepository } from "@/server/repositories/category.repository";
 import { ReportWizard } from "@/features/reports/components/report-wizard";
 
 export const metadata: Metadata = {
-  title: "Report an Infrastructure Problem — Chigir Ale",
+  title: "Report an Infrastructure Problem — Chigr Ale",
   description: "Submit a location-based civic infrastructure report to municipal authorities",
 };
 

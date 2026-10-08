@@ -4,7 +4,7 @@ import { HotspotService } from "@/server/services/hotspot.service";
 import { TransparencyDashboard } from "@/features/analytics/components/transparency-dashboard";
 
 export const metadata: Metadata = {
-  title: "Public Infrastructure Transparency — Chigir Ale",
+  title: "Public Infrastructure Transparency — Chigr Ale",
   description: "Addis Ababa municipal civic performance, resolution metrics, and hotspot analysis.",
 };
 

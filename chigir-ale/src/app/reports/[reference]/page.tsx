@@ -27,7 +27,7 @@ const LIFECYCLE_STEPS = [
 export async function generateMetadata({ params }: ReportDetailPageProps) {
   const { reference } = await params;
   return {
-    title: `Report ${reference} — Chigir Ale`,
+    title: `Report ${reference} — Chigr Ale`,
     description: `Public status tracking for civic infrastructure report ${reference}`,
   };
 }
@@ -74,7 +74,7 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
             ← Back to Home
           </Link>
           <span className="text-xs text-slate-400 font-mono">
-            Chigir Ale Civic Tracker
+            Chigr Ale Civic Tracker
           </span>
         </div>
 
