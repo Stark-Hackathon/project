@@ -71,52 +71,105 @@ export class SanitizerService {
     }
 
     const hostname = parsed.hostname.toLowerCase().trim();
+    const cleanHost = hostname.replace(/^\[|\]$/g, "");
 
     // Block localhost and common local aliases
     if (
-      hostname === "localhost" ||
-      hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local") ||
-      hostname === "127.0.0.1" ||
-      hostname === "0.0.0.0" ||
-      hostname === "::1" ||
-      hostname === "[::1]"
+      cleanHost === "localhost" ||
+      cleanHost.endsWith(".localhost") ||
+      cleanHost.endsWith(".local") ||
+      cleanHost === "127.0.0.1" ||
+      cleanHost === "0.0.0.0" ||
+      cleanHost === "::1" ||
+      cleanHost === "::"
     ) {
       return { isValid: false, error: "SSRF Protection: Access to localhost or loopback is blocked." };
     }
 
-    // Check IPv4 private and link-local ranges
-    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    if (ipv4Match) {
-      const octet1 = parseInt(ipv4Match[1] ?? "0", 10);
-      const octet2 = parseInt(ipv4Match[2] ?? "0", 10);
+    // Check IPv6 private/link-local/mapped
+    if (cleanHost.includes(":")) {
+      if (
+        cleanHost.startsWith("fe80:") ||
+        cleanHost.startsWith("fc00:") ||
+        cleanHost.startsWith("fd") ||
+        cleanHost.startsWith("::ffff:127.") ||
+        cleanHost.startsWith("::ffff:10.") ||
+        cleanHost.startsWith("::ffff:192.168.") ||
+        cleanHost.startsWith("::ffff:172.") ||
+        cleanHost.startsWith("::ffff:169.254.")
+      ) {
+        return { isValid: false, error: "SSRF Protection: Access to private or local IPv6 range is blocked." };
+      }
+    }
 
+    // Check IPv4 (supports standard dot-decimal, octal, hex, and single 32-bit dword integers)
+    const ipv4 = SanitizerService.parseIpv4Address(cleanHost);
+    if (ipv4) {
+      const [o1, o2] = ipv4;
+
+      // 0.0.0.0/8
+      if (o1 === 0) {
+        return { isValid: false, error: "SSRF Protection: Access to non-routable 0.0.0.0/8 is blocked." };
+      }
       // 10.0.0.0/8 (Private RFC1918)
-      if (octet1 === 10) {
+      if (o1 === 10) {
         return { isValid: false, error: "SSRF Protection: Access to private network (10.0.0.0/8) is blocked." };
       }
-
       // 172.16.0.0/12 (Private RFC1918: 172.16 - 172.31)
-      if (octet1 === 172 && octet2 >= 16 && octet2 <= 31) {
+      if (o1 === 172 && o2 >= 16 && o2 <= 31) {
         return { isValid: false, error: "SSRF Protection: Access to private network (172.16.0.0/12) is blocked." };
       }
-
       // 192.168.0.0/16 (Private RFC1918)
-      if (octet1 === 192 && octet2 === 168) {
+      if (o1 === 192 && o2 === 168) {
         return { isValid: false, error: "SSRF Protection: Access to private network (192.168.0.0/16) is blocked." };
       }
-
       // 169.254.0.0/16 (Link-local & AWS/GCP/Azure Cloud Metadata 169.254.169.254)
-      if (octet1 === 169 && octet2 === 254) {
+      if (o1 === 169 && o2 === 254) {
         return { isValid: false, error: "SSRF Protection: Access to cloud metadata or link-local address is blocked." };
       }
-
       // 127.0.0.0/8 (Loopback range)
-      if (octet1 === 127) {
+      if (o1 === 127) {
         return { isValid: false, error: "SSRF Protection: Access to loopback range is blocked." };
       }
     }
 
     return { isValid: true };
+  }
+
+  private static parseIpv4Address(host: string): [number, number, number, number] | null {
+    // Single 32-bit integer format (e.g. 2130706433 or 0x7f000001)
+    if (/^(0x[0-9a-fA-F]+|\d+)$/.test(host)) {
+      const num = parseInt(host, host.startsWith("0x") || host.startsWith("0X") ? 16 : 10);
+      if (!isNaN(num) && num >= 0 && num <= 0xffffffff) {
+        return [
+          (num >>> 24) & 0xff,
+          (num >>> 16) & 0xff,
+          (num >>> 8) & 0xff,
+          num & 0xff,
+        ];
+      }
+    }
+
+    const parts = host.split(".");
+    if (parts.length === 4) {
+      const octets: number[] = [];
+      for (const p of parts) {
+        let val: number;
+        if (/^0x[0-9a-fA-F]+$/i.test(p)) {
+          val = parseInt(p, 16);
+        } else if (/^0[0-7]+$/.test(p)) {
+          val = parseInt(p, 8);
+        } else if (/^\d+$/.test(p)) {
+          val = parseInt(p, 10);
+        } else {
+          return null;
+        }
+        if (isNaN(val) || val < 0 || val > 255) return null;
+        octets.push(val);
+      }
+      return [octets[0]!, octets[1]!, octets[2]!, octets[3]!];
+    }
+
+    return null;
   }
 }

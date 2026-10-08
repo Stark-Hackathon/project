@@ -76,19 +76,23 @@ export class OutboxService {
         select: { id: true },
       });
       return created.id;
-    } catch {
-      // Memory fallback for headless/test environments
-      const memId = crypto.randomUUID();
-      this.memoryQueue.push({
-        id: memId,
-        type: input.type,
-        aggregateType: input.aggregateType,
-        aggregateId: input.aggregateId,
-        payload: input.payload,
-        attempts: 0,
-        createdAt: new Date(),
-      });
-      return memId;
+    } catch (err) {
+      if ((process.env.NODE_ENV as string) === "test") {
+        // Memory fallback for headless/test environments
+        const memId = crypto.randomUUID();
+        this.memoryQueue.push({
+          id: memId,
+          type: input.type,
+          aggregateType: input.aggregateType,
+          aggregateId: input.aggregateId,
+          payload: input.payload,
+          attempts: 0,
+          createdAt: new Date(),
+        });
+        return memId;
+      }
+      console.error("[OutboxService.recordEvent] DB insert failed:", err);
+      throw err;
     }
   }
 

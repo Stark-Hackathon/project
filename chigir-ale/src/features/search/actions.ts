@@ -33,7 +33,7 @@ export async function searchReportsAction(
     // If citizen requests their own reports or is unprivileged citizen searching private scope
     if (filters.scopeToSelf) {
       if (!user) {
-        return err(new Error("UNAUTHORIZED: Sign in to search your own reports."));
+        return err("UNAUTHORIZED: Sign in to search your own reports.");
       }
       appliedFilters.reporterId = user.id;
     } else if (!isAuthority) {
@@ -48,6 +48,6 @@ export async function searchReportsAction(
     return ok(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to execute search";
-    return err(new Error(msg));
+    return err(msg);
   }
 }

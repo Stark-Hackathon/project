@@ -6,7 +6,12 @@
 /**
  * Standard Result type pattern for domain services and operations
  */
-export type Result<T, E = Error> =
+export interface SerializableError {
+  message: string;
+  code?: string;
+}
+
+export type Result<T, E = SerializableError> =
   | { success: true; data: T }
   | { success: false; error: E };
 
@@ -14,8 +19,16 @@ export function ok<T>(data: T): Result<T, never> {
   return { success: true, data };
 }
 
-export function err<E = Error>(error: E): Result<never, E> {
-  return { success: false, error };
+export function err(
+  error: Error | string | { message: string; code?: string }
+): Result<never, SerializableError> {
+  if (typeof error === "string") {
+    return { success: false, error: { message: error } };
+  }
+  if (error instanceof Error) {
+    return { success: false, error: { message: error.message } };
+  }
+  return { success: false, error: { message: error.message, code: error.code } };
 }
 
 /**

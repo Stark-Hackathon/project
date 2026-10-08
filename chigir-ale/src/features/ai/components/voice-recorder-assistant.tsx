@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useState, useTransition, useRef, useEffect, useCallback } from "react";
 import {
   Mic,
   Square,
@@ -10,6 +10,7 @@ import {
   Languages,
   Sparkles,
   AlertCircle,
+  Loader2,
 } from "lucide-react";
 import { transcribeVoiceAction, translateTextAction } from "@/features/ai/actions";
 import type { TranscriptionResult } from "@/server/services/voice/voice.service";
@@ -38,50 +39,241 @@ export function VoiceRecorderAssistant({
   const [isOpen, setIsOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [timerInterval, setTimerInterval] = useState<NodeJS.Timeout | null>(null);
 
-  const [languageHint, setLanguageHint] = useState<"auto" | "en" | "am">("auto");
+  const [languageHint, setLanguageHint] = useState<"en" | "am">("am");
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [editableText, setEditableText] = useState("");
   const [editableTitle, setEditableTitle] = useState("");
   const [isTranslating, setIsTranslating] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [translatedSnippet, setTranslatedSnippet] = useState<string | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState("");
 
   const [, startTransition] = useTransition();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  function startRecording() {
+  // Hardware & stream refs
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const speechRecognitionRef = useRef<unknown | null>(null);
+  const liveTranscriptRef = useRef<string>("");
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const cleanupStreams = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    if (speechRecognitionRef.current) {
+      try {
+        (speechRecognitionRef.current as { stop: () => void }).stop();
+      } catch {}
+      speechRecognitionRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cleanupStreams();
+    };
+  }, [cleanupStreams]);
+
+  async function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function startRecording() {
     setErrorMsg(null);
-    setIsRecording(true);
-    setRecordingSeconds(0);
     setTranscriptionResult(null);
     setTranslatedSnippet(null);
+    setLiveTranscript("");
+    liveTranscriptRef.current = "";
+    audioChunksRef.current = [];
 
-    const interval = setInterval(() => {
-      setRecordingSeconds((prev) => prev + 1);
-    }, 1000);
-    setTimerInterval(interval);
+    try {
+      // 1. Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      streamRef.current = stream;
+
+      // 2. Setup browser speech recognition if supported
+      if (typeof window !== "undefined") {
+        const win = window as unknown as {
+          SpeechRecognition?: new () => {
+            continuous: boolean;
+            interimResults: boolean;
+            lang: string;
+            onresult: (e: { results: Array<Array<{ transcript: string }>> }) => void;
+            onerror: (e: unknown) => void;
+            start: () => void;
+            stop: () => void;
+          };
+          webkitSpeechRecognition?: new () => {
+            continuous: boolean;
+            interimResults: boolean;
+            lang: string;
+            onresult: (e: { results: Array<Array<{ transcript: string }>> }) => void;
+            onerror: (e: unknown) => void;
+            start: () => void;
+            stop: () => void;
+          };
+        };
+
+        const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
+        if (SpeechRec) {
+          try {
+            const rec = new SpeechRec();
+            rec.continuous = true;
+            rec.interimResults = true;
+            rec.lang = languageHint === "am" ? "am-ET" : "en-US";
+            rec.onresult = (event) => {
+              let accumulated = "";
+              for (let i = 0; i < event.results.length; i++) {
+                accumulated += event.results[i][0].transcript;
+              }
+              if (accumulated.trim()) {
+                liveTranscriptRef.current = accumulated.trim();
+                setLiveTranscript(accumulated.trim());
+              }
+            };
+            rec.onerror = (e) => {
+              console.warn("Speech recognition warning:", e);
+            };
+            rec.start();
+            speechRecognitionRef.current = rec;
+          } catch (e) {
+            console.warn("Could not start SpeechRecognition:", e);
+          }
+        }
+      }
+
+      // 3. Setup MediaRecorder to capture audio
+      let mimeType = "audio/webm";
+      if (!MediaRecorder.isTypeSupported("audio/webm")) {
+        if (MediaRecorder.isTypeSupported("audio/mp4")) mimeType = "audio/mp4";
+        else mimeType = "";
+      }
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const capturedSpeech = liveTranscriptRef.current.trim();
+        const finalBlob = new Blob(audioChunksRef.current, {
+          type: mimeType || "audio/webm",
+        });
+
+        const base64Audio =
+          finalBlob.size > 0 ? await blobToBase64(finalBlob) : undefined;
+
+        await processTranscription({
+          base64Audio,
+          mimeType: finalBlob.type,
+          speechTranscript: capturedSpeech,
+        });
+      };
+
+      recorder.start(200);
+      mediaRecorderRef.current = recorder;
+
+      // 4. Start timer & update state
+      setRecordingSeconds(0);
+      setIsRecording(true);
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: unknown) {
+      console.warn("Microphone access error:", err);
+      setIsRecording(false);
+      setErrorMsg(
+        "Microphone permission was denied or not found. Please allow microphone access in your browser or choose a sample prompt below."
+      );
+    }
   }
 
   function stopRecording(simulatedInput?: string) {
-    if (timerInterval) {
-      clearInterval(timerInterval);
-      setTimerInterval(null);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
     }
     setIsRecording(false);
 
-    const textToProcess = simulatedInput?.trim() || "";
-    if (!textToProcess) {
-      setErrorMsg("No audible speech was provided. Please speak into your microphone and try again.");
+    if (speechRecognitionRef.current) {
+      try {
+        (speechRecognitionRef.current as { stop: () => void }).stop();
+      } catch {}
+      speechRecognitionRef.current = null;
+    }
+
+    if (simulatedInput) {
+      // If simulated demo prompt was clicked
+      cleanupStreams();
+      processTranscription({ simulatedText: simulatedInput.trim() });
       return;
     }
 
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+    } else {
+      // No active media recorder, process what was captured
+      processTranscription({
+        speechTranscript: liveTranscriptRef.current.trim(),
+      });
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  }
+
+  async function processTranscription(params: {
+    base64Audio?: string;
+    mimeType?: string;
+    speechTranscript?: string;
+    simulatedText?: string;
+  }) {
+    setIsTranscribing(true);
+    setErrorMsg(null);
+
     startTransition(async () => {
       const res = await transcribeVoiceAction({
-        simulatedText: textToProcess,
+        base64Audio: params.base64Audio,
+        mimeType: params.mimeType,
+        speechTranscript: params.speechTranscript,
+        simulatedText: params.simulatedText,
         languageHint,
       });
 
+      setIsTranscribing(false);
       if (!res.success) {
         setErrorMsg(res.error.message);
       } else {
@@ -114,6 +306,7 @@ export function VoiceRecorderAssistant({
       description: editableText,
       suggestedCategorySlug: transcriptionResult?.suggestedCategorySlug,
     });
+    cleanupStreams();
     setIsOpen(false);
   }
 
@@ -123,7 +316,7 @@ export function VoiceRecorderAssistant({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs font-semibold transition-colors border border-indigo-200/60 dark:border-indigo-800/40"
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs font-semibold transition-colors border border-indigo-200/60 dark:border-indigo-800/40 cursor-pointer"
       >
         <Mic className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
         <span>Voice Assist / በድምፅ ይናገሩ</span>
@@ -132,7 +325,7 @@ export function VoiceRecorderAssistant({
       {/* Voice Assistant Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-5">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
@@ -152,10 +345,11 @@ export function VoiceRecorderAssistant({
               <button
                 type="button"
                 onClick={() => {
-                  if (isRecording) stopRecording();
+                  cleanupStreams();
+                  setIsRecording(false);
                   setIsOpen(false);
                 }}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -169,18 +363,18 @@ export function VoiceRecorderAssistant({
               </span>
 
               <div className="flex gap-1">
-                {(["auto", "en", "am"] as const).map((lang) => (
+                {(["am", "en"] as const).map((lang) => (
                   <button
                     key={lang}
                     type="button"
                     onClick={() => setLanguageHint(lang)}
-                    className={`px-3 py-1 rounded-xl text-xs font-semibold transition-colors ${
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
                       languageHint === lang
                         ? "bg-indigo-600 text-white shadow-sm"
                         : "text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
                     }`}
                   >
-                    {lang === "auto" ? "Auto" : lang === "en" ? "English" : "አማርኛ"}
+                    {lang === "am" ? "አማርኛ" : "English"}
                   </button>
                 ))}
               </div>
@@ -193,12 +387,17 @@ export function VoiceRecorderAssistant({
                   <button
                     type="button"
                     onClick={startRecording}
-                    className="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center mx-auto shadow-lg shadow-rose-600/30 transition-transform active:scale-95"
+                    disabled={isTranscribing}
+                    className="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center mx-auto shadow-lg shadow-rose-600/30 transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
                   >
-                    <Mic className="w-8 h-8" />
+                    {isTranscribing ? (
+                      <Loader2 className="w-8 h-8 animate-spin" />
+                    ) : (
+                      <Mic className="w-8 h-8" />
+                    )}
                   </button>
                   <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mt-3">
-                    Click to Start Speaking
+                    {isTranscribing ? "Transcribing speech..." : "Click to Start Speaking"}
                   </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     Describe what happened, location, and hazard level
@@ -211,7 +410,7 @@ export function VoiceRecorderAssistant({
                     <button
                       type="button"
                       onClick={() => stopRecording()}
-                      className="relative w-14 h-14 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95"
+                      className="relative w-14 h-14 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95 cursor-pointer"
                     >
                       <Square className="w-6 h-6 fill-current" />
                     </button>
@@ -219,10 +418,20 @@ export function VoiceRecorderAssistant({
                   <div className="text-sm font-bold text-rose-600 animate-pulse">
                     Recording: {recordingSeconds}s
                   </div>
+
+                  {liveTranscript && (
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 text-xs text-slate-700 dark:text-slate-300 text-left animate-in fade-in">
+                      <span className="text-[10px] uppercase font-bold text-rose-500 block mb-1">
+                        Live Speech Detected:
+                      </span>
+                      &ldquo;{liveTranscript}&rdquo;
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => stopRecording()}
-                    className="text-xs font-semibold text-slate-600 dark:text-slate-300 hover:underline"
+                    className="text-xs font-semibold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
                   >
                     Click to Finish &amp; Transcribe
                   </button>
@@ -258,7 +467,7 @@ export function VoiceRecorderAssistant({
               </div>
             )}
 
-            {/* Citizen Review Card (Spec §38: The user must be able to review the transcription before submission) */}
+            {/* Citizen Review Card */}
             {transcriptionResult && (
               <div className="p-4 bg-indigo-50/40 dark:bg-indigo-950/20 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 space-y-3 animate-in fade-in">
                 <div className="flex items-center justify-between text-xs">
@@ -303,7 +512,7 @@ export function VoiceRecorderAssistant({
                     type="button"
                     onClick={handleTranslateToggle}
                     disabled={isTranslating}
-                    className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1"
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                   >
                     <Languages className="w-3.5 h-3.5" />
                     {transcriptionResult.detectedLanguage === "am"
@@ -332,15 +541,16 @@ export function VoiceRecorderAssistant({
                     onClick={() => {
                       setTranscriptionResult(null);
                       setTranslatedSnippet(null);
+                      setLiveTranscript("");
                     }}
-                    className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold"
+                    className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
                   >
                     Re-record
                   </button>
                   <button
                     type="button"
                     onClick={handleApply}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-indigo-600/20 cursor-pointer"
                   >
                     <Check className="w-4 h-4" /> Use This in Report / ተጠቀም
                   </button>

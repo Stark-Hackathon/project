@@ -188,7 +188,7 @@ export function ChigrNavbar() {
                 <button
                   type="button"
                   onClick={() => setLanguage("en")}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  className={`px-3 py-2 min-h-[44px] min-w-[60px] flex items-center justify-center rounded-lg transition-all cursor-pointer ${
                     language === "en"
                       ? "bg-[#0f3d2e] text-white shadow-sm font-black"
                       : "text-slate-600 dark:text-slate-400"
@@ -199,7 +199,7 @@ export function ChigrNavbar() {
                 <button
                   type="button"
                   onClick={() => setLanguage("am")}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  className={`px-3 py-2 min-h-[44px] min-w-[60px] flex items-center justify-center rounded-lg transition-all cursor-pointer ${
                     language === "am"
                       ? "bg-[#0f3d2e] text-white shadow-sm font-black"
                       : "text-slate-600 dark:text-slate-400"

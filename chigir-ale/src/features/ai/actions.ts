@@ -40,7 +40,7 @@ export async function getReportAIAnalysisAction(reportId: string) {
       recommendation: latestRec ? (latestRec.result as unknown) : null,
     });
   } catch (error) {
-    return err(error instanceof Error ? error : new Error("Failed to load AI analyses"));
+    return err(error instanceof Error ? error.message : "Failed to load AI analyses");
   }
 }
 
@@ -51,7 +51,7 @@ export async function runReportAIAnalysisAction(reportId: string) {
   try {
     const user = await getAuthenticatedUser();
     if (!user) {
-      return err(new Error("Unauthorized: Sign in required to run AI analysis"));
+      return err("Unauthorized: Sign in required to run AI analysis");
     }
 
     const recommendation = await AIService.getSmartRecommendations(reportId);
@@ -59,7 +59,7 @@ export async function runReportAIAnalysisAction(reportId: string) {
 
     return ok(recommendation);
   } catch (error) {
-    return err(error instanceof Error ? error : new Error("Failed to run AI recommendations"));
+    return err(error instanceof Error ? error.message : "Failed to run AI recommendations");
   }
 }
 
@@ -72,7 +72,7 @@ export async function overrideAISuggestionAction(data: z.infer<typeof overrideSc
     const authority = await requireAuthorityUser();
     const parsed = overrideSchema.safeParse(data);
     if (!parsed.success) {
-      return err(new Error(parsed.error.issues[0]?.message || "Invalid override data"));
+      return err(parsed.error.issues[0]?.message || "Invalid override data");
     }
 
     const { reportId, overrideType, originalValue, overriddenValue, reason, applyChange } = parsed.data;
@@ -92,7 +92,7 @@ export async function overrideAISuggestionAction(data: z.infer<typeof overrideSc
     revalidatePath(`/authority/reports`);
     return ok({ success: true, message: `Successfully overrode AI ${overrideType.toLowerCase()}` });
   } catch (error) {
-    return err(error instanceof Error ? error : new Error("Failed to record human override"));
+    return err(error instanceof Error ? error.message : "Failed to record human override");
   }
 }
 
@@ -107,7 +107,7 @@ export async function retryAIJobAction(jobId: string) {
 
     return ok({ success });
   } catch (error) {
-    return err(error instanceof Error ? error : new Error("Failed to retry AI job"));
+    return err(error instanceof Error ? error.message : "Failed to retry AI job");
   }
 }
 
@@ -119,13 +119,13 @@ export async function transcribeVoiceAction(input: {
   mimeType?: string;
   simulatedText?: string;
   speechTranscript?: string;
-  languageHint?: "en" | "am" | "om" | "auto";
+  languageHint?: "en" | "am" | "om";
 }) {
   try {
     const result = await VoiceService.transcribe(input);
     return ok(result);
   } catch (error) {
-    return err(error instanceof Error ? error : new Error("Voice transcription failed"));
+    return err(error instanceof Error ? error.message : "Voice transcription failed");
   }
 }
 
@@ -137,6 +137,6 @@ export async function translateTextAction(text: string, fromLang: string, toLang
     const result = await VoiceService.translate(text, fromLang, toLang);
     return ok(result);
   } catch (error) {
-    return err(error instanceof Error ? error : new Error("Translation failed"));
+    return err(error instanceof Error ? error.message : "Translation failed");
   }
 }

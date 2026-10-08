@@ -23,7 +23,7 @@ export async function getNotificationsAction(opts?: {
 }) {
   const user = await getAuthenticatedUser();
   if (!user) {
-    return err(new Error("UNAUTHORIZED: Sign in to view notifications."));
+    return err("UNAUTHORIZED: Sign in to view notifications.");
   }
 
   try {
@@ -36,7 +36,7 @@ export async function getNotificationsAction(opts?: {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to load notifications.";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
 
@@ -59,29 +59,29 @@ export async function markNotificationReadAction(
 ): Promise<Result<{ success: boolean }>> {
   const user = await getAuthenticatedUser();
   if (!user) {
-    return err(new Error("UNAUTHORIZED: Sign in required."));
+    return err("UNAUTHORIZED: Sign in required.");
   }
 
   if (!notificationId || typeof notificationId !== "string") {
-    return err(new Error("Invalid notification ID."));
+    return err("Invalid notification ID.");
   }
 
   try {
     const updated = await NotificationService.markAsRead(notificationId, user.id);
     if (!updated) {
-      return err(new Error("Notification not found."));
+      return err("Notification not found.");
     }
     return ok({ success: true });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to update notification.";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
 
 export async function markAllNotificationsReadAction(): Promise<Result<{ count: number }>> {
   const user = await getAuthenticatedUser();
   if (!user) {
-    return err(new Error("UNAUTHORIZED: Sign in required."));
+    return err("UNAUTHORIZED: Sign in required.");
   }
 
   try {
@@ -89,7 +89,7 @@ export async function markAllNotificationsReadAction(): Promise<Result<{ count: 
     return ok({ count });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to mark all as read.";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
 
@@ -98,12 +98,12 @@ export async function registerDeviceTokenAction(
 ): Promise<Result<{ deviceId: string }>> {
   const user = await getAuthenticatedUser();
   if (!user) {
-    return err(new Error("UNAUTHORIZED: Sign in to register device for push notifications."));
+    return err("UNAUTHORIZED: Sign in to register device for push notifications.");
   }
 
   const parsed = registerDeviceSchema.safeParse(rawInput);
   if (!parsed.success) {
-    return err(new Error("Invalid device registration payload."));
+    return err("Invalid device registration payload.");
   }
 
   try {
@@ -118,7 +118,7 @@ export async function registerDeviceTokenAction(
     return ok({ deviceId: device.id });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to register push device.";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
 
@@ -126,7 +126,7 @@ export async function unregisterDeviceTokenAction(
   pushToken: string
 ): Promise<Result<{ success: boolean }>> {
   if (!pushToken || typeof pushToken !== "string") {
-    return err(new Error("Push token is required."));
+    return err("Push token is required.");
   }
 
   try {
@@ -134,6 +134,6 @@ export async function unregisterDeviceTokenAction(
     return ok({ success });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to unregister push device.";
-    return err(new Error(msg));
+    return err(msg);
   }
 }

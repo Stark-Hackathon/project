@@ -16,6 +16,10 @@ export async function GET(req: NextRequest) {
       return new NextResponse("Access Denied: Missing signature parameters.", { status: 403 });
     }
 
+    if (key.includes("..") || key.includes("\0") || key.startsWith("/") || key.startsWith("\\")) {
+      return new NextResponse("Access Denied: Invalid key path.", { status: 400 });
+    }
+
     // 1. Verify read signature and expiration
     const isValid = StorageService.verifyReadSignature(key, exp, sig);
     if (!isValid) {

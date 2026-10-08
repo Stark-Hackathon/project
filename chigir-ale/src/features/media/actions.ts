@@ -5,7 +5,7 @@
  * Spec: Sections 77 (Upload Architecture) & 78 (Storage Architecture)
  */
 import { z } from "zod";
-import type { Result } from "@/types";
+import { type Result, ok, err } from "@/types";
 import { requireAuth } from "@/lib/auth/session";
 import { StorageService, type SignedUploadUrlResult } from "@/server/services/storage.service";
 
@@ -34,10 +34,7 @@ export async function requestMediaUploadUrlAction(
     const user = await requireAuth();
     const parsed = requestUploadSchema.safeParse(input);
     if (!parsed.success) {
-      return {
-        success: false,
-        error: new Error(parsed.error.issues[0]?.message ?? "Invalid upload parameters."),
-      };
+      return err(parsed.error.issues[0]?.message ?? "Invalid upload parameters.");
     }
 
     const result = await StorageService.createUploadUrl({
@@ -45,12 +42,9 @@ export async function requestMediaUploadUrlAction(
       userId: user.id,
     });
 
-    return { success: true, data: result };
+    return ok(result);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to generate upload URL"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to generate upload URL");
   }
 }
 
@@ -64,10 +58,7 @@ export async function confirmMediaUploadAction(
     const user = await requireAuth();
     const parsed = confirmUploadSchema.safeParse(input);
     if (!parsed.success) {
-      return {
-        success: false,
-        error: new Error(parsed.error.issues[0]?.message ?? "Invalid confirmation parameters."),
-      };
+      return err(parsed.error.issues[0]?.message ?? "Invalid confirmation parameters.");
     }
 
     const media = await StorageService.confirmUpload({
@@ -75,11 +66,8 @@ export async function confirmMediaUploadAction(
       userId: user.id,
     });
 
-    return { success: true, data: { mediaId: media.id, publicUrl: media.publicUrl } };
+    return ok({ mediaId: media.id, publicUrl: media.publicUrl });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to confirm media upload"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to confirm media upload");
   }
 }

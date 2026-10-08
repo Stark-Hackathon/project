@@ -18,49 +18,47 @@ const feedbackSchema = z.object({
 });
 
 export async function toggleUpvoteAction(reportId: string): Promise<Result<{ upvoted: boolean; count: number }>> {
-  const user = await getAuthenticatedUser();
-  if (!user) {
-    return err(new Error("UNAUTHORIZED: Please sign in to upvote this report."));
-  }
-
   try {
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      return err("UNAUTHORIZED: Please sign in to upvote this report.");
+    }
     const res = await CommunityService.toggleUpvote(reportId, user.id);
     return ok(res);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to toggle upvote.";
-    return err(new Error(message));
+    return err(message);
   }
 }
 
 export async function confirmReportAction(reportId: string): Promise<Result<{ alreadyConfirmed: boolean; count: number }>> {
-  const user = await getAuthenticatedUser();
-  if (!user) {
-    return err(new Error("UNAUTHORIZED: Please sign in to confirm this report."));
-  }
-
   try {
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      return err("UNAUTHORIZED: Please sign in to confirm this report.");
+    }
     const res = await CommunityService.confirmReport(reportId, user.id);
     return ok(res);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to confirm report.";
-    return err(new Error(message));
+    return err(message);
   }
 }
 
 export async function submitResolutionFeedbackAction(
   rawData: z.infer<typeof feedbackSchema>
 ): Promise<Result<{ message: string; newStatus: string }>> {
-  const user = await getAuthenticatedUser();
-  if (!user) {
-    return err(new Error("UNAUTHORIZED: Please sign in to submit resolution feedback."));
-  }
-
-  const parsed = feedbackSchema.safeParse(rawData);
-  if (!parsed.success) {
-    return err(new Error("Invalid feedback parameters."));
-  }
-
   try {
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      return err("UNAUTHORIZED: Please sign in to submit resolution feedback.");
+    }
+
+    const parsed = feedbackSchema.safeParse(rawData);
+    if (!parsed.success) {
+      return err("Invalid feedback parameters.");
+    }
+
     const res = await CommunityService.submitResolutionFeedback(
       parsed.data.reportId,
       user.id,
@@ -70,7 +68,7 @@ export async function submitResolutionFeedbackAction(
     return ok(res);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to submit resolution feedback.";
-    return err(new Error(message));
+    return err(message);
   }
 }
 
@@ -85,7 +83,7 @@ export async function getNearbyIssuesAction(
     return ok(issues);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load nearby issues.";
-    return err(new Error(message));
+    return err(message);
   }
 }
 
@@ -121,6 +119,6 @@ export async function getCommunityInteractionState(reportId: string) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load community state.";
-    return err(new Error(message));
+    return err(message);
   }
 }

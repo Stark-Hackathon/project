@@ -220,9 +220,31 @@ export class StorageService {
   }
 
   /**
+   * Safely resolve a storage key ensuring it does not escape the upload directory.
+   */
+  private static resolveSafePath(storageKey: string): string {
+    if (!storageKey || storageKey.includes("..") || storageKey.includes("\0") || path.isAbsolute(storageKey)) {
+      throw new Error("SECURITY_VIOLATION: Invalid storage key or path traversal detected.");
+    }
+
+    const storageDir = path.resolve(process.cwd(), "public", "uploads");
+    const resolvedPath = path.resolve(storageDir, storageKey);
+
+    if (!resolvedPath.startsWith(storageDir + path.sep) && resolvedPath !== storageDir) {
+      throw new Error("SECURITY_VIOLATION: Path escapes root storage directory.");
+    }
+
+    return resolvedPath;
+  }
+
+  /**
    * Verifies signed read parameters.
    */
   static verifyReadSignature(storageKey: string, expStr: string, sig: string): boolean {
+    if (!storageKey || storageKey.includes("..") || storageKey.includes("\0") || path.isAbsolute(storageKey)) {
+      return false;
+    }
+
     const exp = parseInt(expStr, 10);
     if (isNaN(exp) || Date.now() > exp) return false;
 
@@ -264,8 +286,7 @@ export class StorageService {
    * Helper to write raw file bytes to local disk (used by local upload handler).
    */
   static async writeLocalFile(storageKey: string, buffer: Buffer): Promise<string> {
-    const storageDir = path.resolve(process.cwd(), "public", "uploads");
-    const filePath = path.join(storageDir, storageKey);
+    const filePath = StorageService.resolveSafePath(storageKey);
 
     // Ensure directory exists
     await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -279,8 +300,7 @@ export class StorageService {
    */
   static async readLocalFile(storageKey: string): Promise<Buffer | null> {
     try {
-      const storageDir = path.resolve(process.cwd(), "public", "uploads");
-      const filePath = path.join(storageDir, storageKey);
+      const filePath = StorageService.resolveSafePath(storageKey);
       return await fs.readFile(filePath);
     } catch {
       return null;
@@ -292,14 +312,14 @@ export class StorageService {
    */
   static async deleteObject(storageKey: string): Promise<boolean> {
     try {
+      const filePath = StorageService.resolveSafePath(storageKey);
+
       // 1. Remove from DB if exists
       await prisma.reportMedia.deleteMany({
         where: { storageKey },
       });
 
       // 2. Remove local file
-      const storageDir = path.resolve(process.cwd(), "public", "uploads");
-      const filePath = path.join(storageDir, storageKey);
       await fs.unlink(filePath).catch(() => {});
 
       return true;

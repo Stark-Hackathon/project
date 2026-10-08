@@ -90,9 +90,9 @@ export default function HowItWorksPage() {
                 <span className="text-5xl sm:text-7xl font-black text-emerald-700/20 dark:text-emerald-400/20 font-mono block">
                   {item.step}
                 </span>
-                <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2 block">
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2 block">
                   {item.title}
-                </span>
+                </h2>
               </div>
 
               <div className="md:col-span-9 space-y-4">

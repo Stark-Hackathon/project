@@ -7,7 +7,7 @@
  * coordinate privacy filtering.
  */
 import { prisma } from "@/lib/db/prisma";
-import type { Result } from "@/types";
+import { type Result, ok, err } from "@/types";
 import { requireAuthorityUser } from "@/lib/auth/session";
 import {
   MapService,
@@ -175,12 +175,9 @@ export async function getMapDataAction(
       params.clusterRadiusKm ?? (isAuthorityMode ? 0.6 : 0.8)
     );
 
-    return { success: true, data: clustered };
+    return ok(clustered);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to load map points"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to load map points");
   }
 }
 
@@ -189,12 +186,9 @@ export async function geocodeAddressAction(
 ): Promise<Result<GeocodingResult[]>> {
   try {
     const results = await MapService.geocode(query);
-    return { success: true, data: results };
+    return ok(results);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Geocoding failed"),
-    };
+    return err(error instanceof Error ? error.message : "Geocoding failed");
   }
 }
 
@@ -204,11 +198,8 @@ export async function reverseGeocodeAction(
 ): Promise<Result<GeocodingResult>> {
   try {
     const result = await MapService.reverseGeocode(latitude, longitude);
-    return { success: true, data: result };
+    return ok(result);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Reverse geocoding failed"),
-    };
+    return err(error instanceof Error ? error.message : "Reverse geocoding failed");
   }
 }

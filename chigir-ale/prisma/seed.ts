@@ -347,6 +347,101 @@ async function main() {
       console.log(`  ✓ Example Report: ${report3.publicReference} (RESOLVED)`);
     }
 
+    const extraReports = [
+      {
+        publicReference: "CHI-2026-000004",
+        categoryId: categoryMap.get("electricity") || categoryMap.get("utilities") || roadsCatId,
+        title: "Dangerous exposed high-voltage wiring on street utility pole",
+        description: "Severed insulation with sparking cables hanging at pedestrian level near Mexico Square.",
+        severity: Severity.CRITICAL,
+        status: ReportStatus.VERIFIED,
+        latitude: 9.0105,
+        longitude: 38.7458,
+        formattedAddress: "Near Mexico Square, Kirkos Sub-City, Addis Ababa",
+        administrativeArea: "Kirkos Sub-City",
+        priorityScore: 95.0,
+      },
+      {
+        publicReference: "CHI-2026-000012",
+        categoryId: categoryMap.get("water") || categoryMap.get("utilities") || roadsCatId,
+        title: "High-pressure clean water pipe ruptured under pavement",
+        description: "Clean drinking water has been gushing onto the roadway for 8 hours opposite Edna Mall.",
+        severity: Severity.HIGH,
+        status: ReportStatus.IN_PROGRESS,
+        latitude: 8.9950,
+        longitude: 38.7890,
+        formattedAddress: "Africa Ave, opposite Edna Mall, Bole Sub-City, Addis Ababa",
+        administrativeArea: "Bole Sub-City",
+        priorityScore: 82.0,
+      },
+      {
+        publicReference: "CHI-2026-000015",
+        categoryId: categoryMap.get("waste-management") || categoryMap.get("public-services") || roadsCatId,
+        title: "Commercial dump bins overflowing into traffic lanes in Merkato",
+        description: "Uncollected commercial refuse overflowing onto street curb creating health and vehicle hazard.",
+        severity: Severity.MEDIUM,
+        status: ReportStatus.SUBMITTED,
+        latitude: 9.0305,
+        longitude: 38.7392,
+        formattedAddress: "Shema Tera Market, Merkato, Addis Ketema, Addis Ababa",
+        administrativeArea: "Addis Ketema Sub-City",
+        priorityScore: 61.0,
+      },
+      {
+        publicReference: "CHI-2026-000018",
+        categoryId: categoryMap.get("traffic-infrastructure") || roadsCatId,
+        title: "Traffic control signal dark causing major intersection gridlock",
+        description: "Primary traffic signal completely non-operational during peak evening traffic hours.",
+        severity: Severity.HIGH,
+        status: ReportStatus.ASSIGNED,
+        latitude: 9.0225,
+        longitude: 38.8015,
+        formattedAddress: "Megenagna Roundabout, Yeka Sub-City, Addis Ababa",
+        administrativeArea: "Yeka Sub-City",
+        priorityScore: 88.0,
+      },
+      {
+        publicReference: "CHI-2026-000022",
+        categoryId: categoryMap.get("public-facilities") || roadsCatId,
+        title: "Pedestrian walkway guardrail collapsed into roadside canal",
+        description: "Missing safety barrier leaves an open drop hazardous to schoolchildren and pedestrians.",
+        severity: Severity.HIGH,
+        status: ReportStatus.UNDER_REVIEW,
+        latitude: 9.0410,
+        longitude: 38.7610,
+        formattedAddress: "Churchill Avenue, Arada Sub-City, Addis Ababa",
+        administrativeArea: "Arada Sub-City",
+        priorityScore: 74.0,
+      },
+      {
+        publicReference: "CHI-2026-000028",
+        categoryId: categoryMap.get("network") || categoryMap.get("telecommunications") || roadsCatId,
+        title: "Overhead fiber communication line sagging across bus route",
+        description: "Low-hanging utility cables snagging high-profile public transport buses.",
+        severity: Severity.MEDIUM,
+        status: ReportStatus.SUBMITTED,
+        latitude: 9.0020,
+        longitude: 38.7710,
+        formattedAddress: "Debre Zeit Road, Nifas Silk-Lafto, Addis Ababa",
+        administrativeArea: "Nifas Silk-Lafto Sub-City",
+        priorityScore: 58.0,
+      },
+    ];
+
+    for (const r of extraReports) {
+      const existing = await prisma.report.findUnique({ where: { publicReference: r.publicReference } });
+      if (!existing) {
+        await prisma.report.create({
+          data: {
+            ...r,
+            reporterId: citizenId,
+            organizationId: municipality.id,
+          },
+        });
+        console.log(`  ✓ Example Report: ${r.publicReference} (${r.status})`);
+      }
+    }
+
     // Example Incident
     const existingIncident = await prisma.incident.findFirst({
       where: { title: "Bole Cameroon Corridor Roadway & Drainage Works" },

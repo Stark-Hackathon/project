@@ -16,7 +16,8 @@ import { VoiceRecorderAssistant } from "@/features/ai/components/voice-recorder-
 import { PlatformService } from "@/features/mobile/services/platform.service";
 import { OfflineStorageService } from "@/features/mobile/services/offline-storage.service";
 import { OfflineDraftBanner } from "@/features/mobile/components/offline-draft-banner";
-import { createReportAction, type CreateReportFormData } from "@/features/reports/actions";
+import { createReportAction } from "@/features/reports/actions";
+import type { CreateReportFormData } from "@/features/reports/schemas";
 
 interface ReportWizardProps {
   categories: CategoryItem[];

@@ -19,10 +19,18 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased selection:bg-emerald-500/20 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-emerald-700 focus:text-white focus:rounded-xl focus:shadow-lg focus:outline-none text-xs font-bold"
+        >
+          Skip to main content
+        </a>
         <LanguageProvider>
           <OfflineBanner />
           <ChigrNavbar />
-          <div className="flex-1 w-full">{children}</div>
+          <main id="main-content" className="flex-1 w-full">
+            {children}
+          </main>
           <ChigrFooter />
         </LanguageProvider>
       </body>

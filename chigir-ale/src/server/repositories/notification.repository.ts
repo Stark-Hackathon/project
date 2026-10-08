@@ -56,17 +56,21 @@ export class NotificationRepository {
           data: (input.data ?? {}) as Prisma.InputJsonValue,
         },
       });
-    } catch {
-      return {
-        id: `offline-notif-${Date.now()}`,
-        userId: input.userId,
-        type: input.type,
-        title: input.title,
-        body: input.body,
-        data: (input.data ?? {}) as Prisma.JsonValue,
-        readAt: null,
-        createdAt: new Date(),
-      };
+    } catch (err) {
+      if ((process.env.NODE_ENV as string) === "test") {
+        return {
+          id: `offline-notif-${Date.now()}`,
+          userId: input.userId,
+          type: input.type,
+          title: input.title,
+          body: input.body,
+          data: (input.data ?? {}) as Prisma.JsonValue,
+          readAt: null,
+          createdAt: new Date(),
+        };
+      }
+      console.error("[NotificationRepository.create] DB insert failed:", err);
+      throw err;
     }
   }
 

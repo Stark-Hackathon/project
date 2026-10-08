@@ -8,6 +8,7 @@ import { ReportReferenceService } from "@/server/services/report-reference.servi
 import { ReportStatusService } from "@/server/services/report-status.service";
 import { AuditService } from "@/server/services/audit.service";
 import { NotificationService, type NotificationType } from "@/server/services/notifications";
+import { OutboxService } from "@/server/services/outbox.service";
 
 export interface CreateReportInput {
   reporterId: string;
@@ -21,12 +22,13 @@ export interface CreateReportInput {
   formattedAddress?: string;
   administrativeArea?: string;
   organizationId?: string;
+  mediaUrls?: string[];
 }
 
 export class ReportRepository {
   /**
    * Create a new report with a generated public reference.
-   * Wrapped in a transaction: creates report + initial event + audit log atomically.
+   * Wrapped in a transaction: creates report + initial event + audit log + media + outbox atomically.
    */
   static async create(
     input: CreateReportInput,
@@ -64,6 +66,34 @@ export class ReportRepository {
           message: "Report submitted.",
         },
       });
+
+      // Media attachments if provided
+      if (input.mediaUrls && input.mediaUrls.length > 0) {
+        await tx.reportMedia.createMany({
+          data: input.mediaUrls.map((url, index) => ({
+            reportId: report.id,
+            type: "IMAGE",
+            storageKey: `evidence-${report.id}-${index}`,
+            publicUrl: url,
+          })),
+        });
+      }
+
+      // Outbox Event inside the same ACID transaction
+      await OutboxService.recordEvent(
+        {
+          type: "report.created",
+          aggregateType: "Report",
+          aggregateId: report.id,
+          payload: {
+            publicReference: report.publicReference,
+            categoryId: report.categoryId,
+            severity: report.severity,
+            reporterId: input.reporterId,
+          },
+        },
+        tx
+      );
 
       // Audit entry
       await AuditService.log(

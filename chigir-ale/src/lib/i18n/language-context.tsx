@@ -29,18 +29,21 @@ const LanguageContext = createContext<LanguageContextType>({
 const STORAGE_KEY = "chigr_ale_lang";
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() => {
-    if (typeof window === "undefined") return "en";
+  const [language, setLanguageState] = useState<Language>("en");
+
+  // Load saved preference on client mount to eliminate SSR hydration mismatch
+  useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY) as Language | null;
       if (saved === "en" || saved === "am") {
-        return saved;
+        queueMicrotask(() => {
+          setLanguageState(saved);
+        });
       }
     } catch {
       // Storage restricted
     }
-    return "en";
-  });
+  }, []);
 
   // Sync html lang attribute whenever language changes
   useEffect(() => {

@@ -19,7 +19,7 @@ export async function getPublicTransparencyAction() {
     return ok(metrics);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to load transparency metrics";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
 
@@ -33,7 +33,7 @@ export async function getOperationalAnalyticsAction(days = 30) {
     return ok(analytics);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to load operational analytics";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
 
@@ -52,6 +52,6 @@ export async function getHotspotsAction(options: {
     return ok(hotspots);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to detect hotspots";
-    return err(new Error(msg));
+    return err(msg);
   }
 }

@@ -10,7 +10,7 @@ import { ReportStatusService } from "@/server/services/report-status.service";
 import { SanitizerService } from "@/server/services/sanitizer.service";
 import { MapService } from "@/server/services/map.service";
 import { MockEmailProvider } from "@/server/services/notifications";
-import { createReportSchema } from "@/features/reports/actions";
+import { createReportSchema } from "@/features/reports/schemas";
 
 describe("Iteration 13: Edge Cases & Production Hardening (Spec §111)", () => {
   describe("Edge Case 1: User Double-Clicks Submit", () => {

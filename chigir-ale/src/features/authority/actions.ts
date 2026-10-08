@@ -8,7 +8,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import type { Result } from "@/types";
+import { type Result, ok, err } from "@/types";
 import { requireAuthorityUser } from "@/lib/auth/session";
 import { AuthorityRepository, type AuthorityReportFilters } from "@/server/repositories/authority.repository";
 import { AuthorityTransitionService } from "@/server/services/authority-transition.service";
@@ -61,12 +61,9 @@ export async function getAuthorityDashboardMetricsAction(): Promise<
   try {
     await requireAuthorityUser();
     const metrics = await AuthorityRepository.getDashboardMetrics();
-    return { success: true, data: metrics };
+    return ok(metrics);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to fetch dashboard metrics"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to fetch dashboard metrics");
   }
 }
 
@@ -79,12 +76,9 @@ export async function listAuthorityReportsAction(
   try {
     await requireAuthorityUser();
     const reports = await AuthorityRepository.listReports(filters);
-    return { success: true, data: reports };
+    return ok(reports);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to list reports"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to list reports");
   }
 }
 
@@ -98,14 +92,11 @@ export async function getAuthorityReportDetailAction(
     await requireAuthorityUser();
     const report = await AuthorityRepository.getReportDetailByReference(reference);
     if (!report) {
-      return { success: false, error: new Error(`Report #${reference} not found`) };
+      return err(`Report #${reference} not found`);
     }
-    return { success: true, data: report };
+    return ok(report);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to fetch report details"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to fetch report details");
   }
 }
 
@@ -117,12 +108,10 @@ export async function transitionReportStatusAction(
 ): Promise<Result<{ status: ReportStatus }>> {
   try {
     const user = await requireAuthorityUser();
+
     const parsed = transitionSchema.safeParse(input);
     if (!parsed.success) {
-      return {
-        success: false,
-        error: new Error(`Validation failed: ${parsed.error.issues[0]?.message ?? "Invalid input"}`),
-      };
+      return err(`Validation failed: ${parsed.error.issues[0]?.message ?? "Invalid input"}`);
     }
 
     const { reportId, targetStatus, reason, notes, severity, categoryId, expectedResolutionAt } =
@@ -146,12 +135,9 @@ export async function transitionReportStatusAction(
     revalidatePath(`/authority/reports/${updated.publicReference}`);
     revalidatePath(`/reports/${updated.publicReference}`);
 
-    return { success: true, data: { status: updated.status } };
+    return ok({ status: updated.status });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to transition report status"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to transition report status");
   }
 }
 
@@ -163,12 +149,10 @@ export async function assignReportAction(
 ): Promise<Result<{ assignmentId: string }>> {
   try {
     const user = await requireAuthorityUser();
+
     const parsed = assignSchema.safeParse(input);
     if (!parsed.success) {
-      return {
-        success: false,
-        error: new Error(`Validation failed: ${parsed.error.issues[0]?.message ?? "Invalid input"}`),
-      };
+      return err(`Validation failed: ${parsed.error.issues[0]?.message ?? "Invalid input"}`);
     }
 
     const assignment = await AssignmentService.assign(
@@ -179,12 +163,9 @@ export async function assignReportAction(
     revalidatePath("/authority");
     revalidatePath("/authority/reports");
 
-    return { success: true, data: { assignmentId: assignment.id } };
+    return ok({ assignmentId: assignment.id });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to assign report"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to assign report");
   }
 }
 
@@ -198,12 +179,9 @@ export async function recalculatePriorityAction(
     await requireAuthorityUser();
     const result = await PriorityService.recalculateForReport(reportId);
     revalidatePath("/authority/reports");
-    return { success: true, data: { score: result.score } };
+    return ok({ score: result.score });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to recalculate priority"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to recalculate priority");
   }
 }
 
@@ -222,12 +200,9 @@ export async function getDepartmentsAndStaffAction(organizationId?: string): Pro
       AuthorityRepository.listDepartments(organizationId),
       AuthorityRepository.listStaffMembers(organizationId),
     ]);
-    return { success: true, data: { departments, staff } };
+    return ok({ departments, staff });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to load departments and staff"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to load departments and staff");
   }
 }
 
@@ -241,7 +216,7 @@ export async function getRoutingSuggestionAction(
     await requireAuthorityUser();
     const report = await AuthorityRepository.getReportDetailByReference(reportId);
     if (!report) {
-      return { success: false, error: new Error("Report not found") };
+      return err("Report not found");
     }
 
     const suggestion = await RoutingService.suggestDepartment({
@@ -252,11 +227,8 @@ export async function getRoutingSuggestionAction(
       organizationId: report.organizationId ?? undefined,
     });
 
-    return { success: true, data: suggestion };
+    return ok(suggestion);
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to compute routing suggestion"),
-    };
+    return err(error instanceof Error ? error.message : "Failed to compute routing suggestion");
   }
 }

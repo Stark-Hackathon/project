@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createReportSchema } from "@/features/reports/actions";
+import { createReportSchema } from "@/features/reports/schemas";
 
 describe("Iteration 3: Citizen Reporting & Experience", () => {
   describe("Report Input Validation (createReportSchema)", () => {

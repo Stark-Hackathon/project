@@ -20,7 +20,11 @@ export async function GET(request: Request) {
   const offset = parseInt(searchParams.get("offset") ?? "0", 10);
 
   const user = await getAuthenticatedUser();
-  const clientId = user?.id || request.headers.get("x-forwarded-for") || "anonymous_client";
+  const rawForwarded = request.headers.get("x-forwarded-for");
+  const clientIp = (rawForwarded ? rawForwarded.split(",")[0]?.trim() : null) ||
+    request.headers.get("x-real-ip") ||
+    "127.0.0.1";
+  const clientId = user ? `user:${user.id}` : `ip:${clientIp}`;
 
   // Rate Limiting per Spec Section 81
   const rateLimit = RateLimitService.check(clientId, "SEARCH");

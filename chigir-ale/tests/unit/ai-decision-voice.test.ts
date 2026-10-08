@@ -294,5 +294,49 @@ describe("Iteration 9: AI, Voice & Smart Decision Support", () => {
       assert.equal(result.suggestedCategorySlug, "roads");
       assert.ok(result.suggestedTitle.length > 0);
     });
+
+    it("should respect explicit Amharic language selection for voice transcription", async () => {
+      const result = await voiceProvider.transcribe({
+        simulatedText: "የውሃ ቧንቧ ፈሰሰ",
+        languageHint: "am",
+      });
+      assert.equal(result.detectedLanguage, "am");
+      assert.equal(result.suggestedCategorySlug, "water");
+    });
+
+    it("should transcribe speechTranscript captured live from Web Speech API", async () => {
+      const result = await voiceProvider.transcribe({
+        speechTranscript: "የኤሌክትሪክ ሽቦ ተበጥሷል ሌሊት አደጋ ያስከትላል",
+        languageHint: "am",
+      });
+      assert.equal(result.detectedLanguage, "am");
+      assert.equal(result.suggestedCategorySlug, "electricity");
+      assert.ok(result.rawText.includes("የኤሌክትሪክ ሽቦ"));
+    });
+
+    it("should handle audio-only recording gracefully when cloud speech API is offline", async () => {
+      // Simulate real recorded audio blob (> 200 base64 chars)
+      const simulatedAudio = "data:audio/webm;base64," + "A".repeat(300);
+      const result = await voiceProvider.transcribe({
+        base64Audio: simulatedAudio,
+        mimeType: "audio/webm",
+        languageHint: "am",
+      });
+      assert.ok(result.rawText.length > 0);
+      assert.equal(result.detectedLanguage, "am");
+      assert.ok(result.suggestedTitle.length > 0);
+    });
+
+    it("should reject when no audio and no text are provided", async () => {
+      await assert.rejects(
+        async () => {
+          await voiceProvider.transcribe({});
+        },
+        {
+          message: /Unable to transcribe your recording/,
+        }
+      );
+    });
   });
 });
+

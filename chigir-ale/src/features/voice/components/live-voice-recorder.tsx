@@ -54,8 +54,8 @@ export function LiveVoiceRecorder({
   onCancel,
   autoAnalyze = true,
 }: LiveVoiceRecorderProps) {
-  // Language configuration: [ Auto ] [ አማርኛ ] [ English ]
-  const [selectedLanguage, setSelectedLanguage] = useState<"auto" | "am" | "en">("auto");
+  // Language configuration: [ አማርኛ ] [ English ]
+  const [selectedLanguage, setSelectedLanguage] = useState<"am" | "en">("am");
 
   // Distinct recording & transcription states
   const [isRecording, setIsRecording] = useState(false);
@@ -109,13 +109,10 @@ export function LiveVoiceRecorder({
         // Set recognition language based on user selection:
         // 'am' -> am-ET (Amharic - Ethiopia)
         // 'en' -> en-US (English)
-        // 'auto' -> en-US or multilingual recognition
-        if (selectedLanguage === "am") {
-          recognition.lang = "am-ET";
-        } else if (selectedLanguage === "en") {
+        if (selectedLanguage === "en") {
           recognition.lang = "en-US";
         } else {
-          recognition.lang = "en-US";
+          recognition.lang = "am-ET";
         }
 
         recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
@@ -241,12 +238,46 @@ export function LiveVoiceRecorder({
       recorder.start(200);
       mediaRecorderRef.current = recorder;
 
-      // 5. Start browser speech recognition if available
-      if (speechRecognitionRef.current) {
-        try {
-          speechRecognitionRef.current.start();
-        } catch (e) {
-          console.warn("Speech recognition start warning:", e);
+      // 5. Start browser speech recognition with fresh instance per session
+      if (typeof window !== "undefined") {
+        const win = window as unknown as {
+          SpeechRecognition?: new () => BrowserSpeechRecognition;
+          webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+        };
+        const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
+
+        if (SpeechRecognitionClass) {
+          try {
+            if (speechRecognitionRef.current) {
+              try {
+                speechRecognitionRef.current.stop();
+              } catch {}
+            }
+            const recognition = new SpeechRecognitionClass();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = selectedLanguage === "en" ? "en-US" : "am-ET";
+
+            recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
+              let accumulated = "";
+              for (let i = 0; i < event.results.length; i++) {
+                accumulated += event.results[i][0].transcript;
+              }
+              if (accumulated.trim()) {
+                speechTranscriptRef.current = accumulated.trim();
+                setTranscribedText(accumulated.trim());
+              }
+            };
+
+            recognition.onerror = (e) => {
+              console.warn("Speech recognition notice:", e);
+            };
+
+            recognition.start();
+            speechRecognitionRef.current = recognition;
+          } catch (e) {
+            console.warn("Speech recognition start warning:", e);
+          }
         }
       }
 
@@ -277,6 +308,7 @@ export function LiveVoiceRecorder({
       try {
         speechRecognitionRef.current.stop();
       } catch {}
+      speechRecognitionRef.current = null;
     }
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
@@ -408,21 +440,8 @@ export function LiveVoiceRecorder({
         />
       )}
 
-      {/* Language Selector Segmented Bar (Spec §38 - Auto / አማርኛ / English) */}
+      {/* Language Selector Segmented Bar (አማርኛ / English) */}
       <div className="mb-6 flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
-        <button
-          type="button"
-          onClick={() => setSelectedLanguage("auto")}
-          disabled={isRecording || isProcessing}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
-            selectedLanguage === "auto"
-              ? "bg-[#0e3e2c] text-white shadow-sm"
-              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          }`}
-        >
-          Auto
-        </button>
-
         <button
           type="button"
           onClick={() => setSelectedLanguage("am")}

@@ -17,13 +17,17 @@ export type AuthenticatedUser = {
  * Returns null if not authenticated.
  */
 export async function getAuthenticatedUser(): Promise<AuthenticatedUser | null> {
-  const session = await auth();
-  if (!session?.user?.id) return null;
-  return {
-    id: session.user.id,
-    name: session.user.name ?? "",
-    email: session.user.email ?? "",
-  };
+  try {
+    const session = await auth();
+    if (!session?.user?.id) return null;
+    return {
+      id: session.user.id,
+      name: session.user.name ?? "",
+      email: session.user.email ?? "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -127,8 +131,12 @@ export async function requireAuthorityUser() {
     },
   });
 
+  if (!membership) {
+    throw new Error("FORBIDDEN: Requires active authority staff membership.");
+  }
+
   return {
     ...user,
-    membership: membership ?? null,
+    membership,
   };
 }

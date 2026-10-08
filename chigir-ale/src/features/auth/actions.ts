@@ -9,7 +9,7 @@ import { AuthError } from "next-auth";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
-import type { Result } from "@/types";
+import { type Result, ok, err } from "@/types";
 import { RateLimitService } from "@/server/services/rate-limit.service";
 import { PrivacyService } from "@/server/services/privacy.service";
 
@@ -33,7 +33,7 @@ export async function signUpAction(
 ): Promise<Result<{ userId: string }>> {
   const parsed = signUpSchema.safeParse(data);
   if (!parsed.success) {
-    return { success: false, error: new Error("Invalid input: " + parsed.error.message) };
+    return err("Invalid input: " + parsed.error.message);
   }
 
   const { name, email, password } = parsed.data;
@@ -41,7 +41,7 @@ export async function signUpAction(
   // Check for existing user
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    return { success: false, error: new Error("An account with this email already exists.") };
+    return err("An account with this email already exists.");
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
@@ -56,9 +56,9 @@ export async function signUpAction(
       },
       select: { id: true },
     });
-    return { success: true, data: { userId: user.id } };
+    return ok({ userId: user.id });
   } catch {
-    return { success: false, error: new Error("Failed to create account. Please try again.") };
+    return err("Failed to create account. Please try again.");
   }
 }
 
@@ -67,7 +67,7 @@ export async function signInAction(
 ): Promise<Result<{ redirectTo: string }>> {
   const parsed = signInSchema.safeParse(data);
   if (!parsed.success) {
-    return { success: false, error: new Error("Invalid credentials.") };
+    return err("Invalid credentials.");
   }
 
   const { email, password, callbackUrl } = parsed.data;
@@ -75,12 +75,9 @@ export async function signInAction(
   // Rate Limiting on Login per Spec Section 81
   const rateLimit = RateLimitService.check(email, "LOGIN");
   if (!rateLimit.success) {
-    return {
-      success: false,
-      error: new Error(
-        `Too many login attempts. Please try again in ${rateLimit.retryAfterSeconds ?? 60} seconds.`
-      ),
-    };
+    return err(
+      `Too many login attempts. Please try again in ${rateLimit.retryAfterSeconds ?? 60} seconds.`
+    );
   }
 
   try {
@@ -89,10 +86,10 @@ export async function signInAction(
       password,
       redirect: false,
     });
-    return { success: true, data: { redirectTo: callbackUrl ?? "/" } };
+    return ok({ redirectTo: callbackUrl ?? "/" });
   } catch (error) {
     if (error instanceof AuthError) {
-      return { success: false, error: new Error("Invalid email or password.") };
+      return err("Invalid email or password.");
     }
     throw error;
   }
@@ -105,17 +102,14 @@ export async function signOutAction(): Promise<void> {
 export async function deleteAccountAction(): Promise<Result<{ success: boolean }>> {
   const session = await auth();
   if (!session?.user?.id) {
-    return { success: false, error: new Error("Unauthorized: Must be logged in.") };
+    return err("Unauthorized: Must be logged in.");
   }
 
   try {
     await PrivacyService.anonymizeUserAccount(session.user.id);
     await signOut({ redirect: false });
-    return { success: true, data: { success: true } };
+    return ok({ success: true });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error : new Error("Failed to delete account."),
-    };
+    return err(error instanceof Error ? error.message : "Failed to delete account.");
   }
 }

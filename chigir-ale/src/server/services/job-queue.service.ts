@@ -70,7 +70,23 @@ export class JobQueueService {
     };
 
     this.jobs.set(id, job);
+    this.pruneOldJobs();
     return id;
+  }
+
+  /**
+   * Bounded memory eviction for completed and failed jobs to prevent unbounded memory growth.
+   */
+  private static pruneOldJobs(): void {
+    if (this.jobs.size > 500) {
+      const completedOrFailed = Array.from(this.jobs.entries())
+        .filter(([, j]) => j.status === "COMPLETED" || j.status === "FAILED")
+        .sort((a, b) => a[1].createdAt - b[1].createdAt);
+      for (let i = 0; i < Math.min(completedOrFailed.length, 100); i++) {
+        const entry = completedOrFailed[i];
+        if (entry) this.jobs.delete(entry[0]);
+      }
+    }
   }
 
   /**

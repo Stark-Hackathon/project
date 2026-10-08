@@ -25,6 +25,30 @@ export class ReportReferenceService {
     const year = new Date().getFullYear();
     const prefix = `${ReportReferenceService.PREFIX}-${year}-`;
 
+    type RawQueryable = {
+      $queryRawUnsafe: (query: string) => Promise<{ nextval: string | number }[]>;
+    };
+
+    // Try atomic PostgreSQL sequence first for strict concurrency safety
+    if (
+      (process.env.NODE_ENV as string) !== "test" &&
+      "$queryRawUnsafe" in client &&
+      typeof (client as unknown as RawQueryable).$queryRawUnsafe === "function"
+    ) {
+      try {
+        const queryClient = client as unknown as RawQueryable;
+        const rows = await queryClient.$queryRawUnsafe(
+          `SELECT nextval('chigir_report_seq') AS nextval`
+        );
+        if (rows && rows.length > 0 && rows[0]?.nextval !== undefined) {
+          const seq = Number(rows[0].nextval);
+          return `${prefix}${String(seq).padStart(6, "0")}`;
+        }
+      } catch {
+        // Gracefully fall back to deterministic query if sequence uninitialized
+      }
+    }
+
     // Find the highest existing reference for this year
     const latest = await client.report.findFirst({
       where: {

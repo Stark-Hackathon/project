@@ -36,7 +36,7 @@ export async function moderateReportAction(input: ModerationFormData) {
 
     const parsed = moderationSchema.safeParse(input);
     if (!parsed.success) {
-      return err(new Error(parsed.error.issues[0]?.message ?? "Invalid input"));
+      return err(parsed.error.issues[0]?.message ?? "Invalid input");
     }
 
     const result = await ModerationService.applyModeration({
@@ -58,6 +58,6 @@ export async function moderateReportAction(input: ModerationFormData) {
     return ok(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to execute moderation action";
-    return err(new Error(msg));
+    return err(msg);
   }
 }
